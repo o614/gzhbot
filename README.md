@@ -18,6 +18,7 @@
     * 指令：`图标 微信`
 
 ## 🛠 部署指南 (Deploy)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/o614/apple-wechat-bot)
 
 本项目非常适合部署在 [Vercel](https://vercel.com/) 上。
 
