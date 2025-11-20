@@ -1,13 +1,6 @@
----
-
-### 第四步：选择开源协议 (LICENSE)
-通常为了让大家放心使用，建议添加一个 `LICENSE` 文件。
-在根目录下新建文件名为 `LICENSE`，内容粘贴下面的 **MIT 协议**（这是最通用的开源协议）：
-
-```text
 MIT License
 
-Copyright (c) 2025 [不要艾特我]
+Copyright (c) 2025 o614
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
