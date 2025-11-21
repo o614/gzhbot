@@ -4,7 +4,7 @@ const axios = require('axios');
 const { Parser, Builder } = require('xml2js');
 const https = require('https');
 
-// 【核心修改】这里引入了外部的数据文件，让代码更干净
+// 引入外部数据文件
 const { ALL_SUPPORTED_REGIONS, DSF_MAP, BLOCKED_APP_IDS, TARGET_COUNTRIES_FOR_AVAILABILITY } = require('./consts');
 
 const WECHAT_TOKEN = process.env.WECHAT_TOKEN;
@@ -13,7 +13,7 @@ const parser = new Parser({ explicitArray: false, trim: true });
 const builder = new Builder({ cdata: true, rootName: 'xml', headless: true });
 
 const HTTP = axios.create({
-  timeout: 6000,
+  timeout: 6000, // 适当增加超时时间，因为多了一个汇率请求
   headers: { 'user-agent': 'Mozilla/5.0 (Serverless-WeChatBot)' }
 });
 
@@ -159,31 +159,26 @@ async function getJSON(url, { timeout = 6000, retries = 1 } = {}) {
   throw lastErr;
 }
 
+// 【功能 1：榜单查询】已修复为旧版 iTunes 接口
 async function handleChartQuery(regionName, chartType) {
   const regionCode = getCountryCode(regionName);
   if (!regionCode) return '不支持的地区或格式错误。';
 
-  // 【修改 1】改用旧版 iTunes RSS 接口，稳定性远高于新版接口
   const typePath = chartType === '免费榜' ? 'topfreeapplications' : 'toppaidapplications';
   const url = `https://itunes.apple.com/${regionCode}/rss/${typePath}/limit=10/json`;
 
   try {
     const data = await getJSON(url);
-    
-    // 【修改 2】旧版接口的数据在 feed.entry 里
     const apps = (data && data.feed && data.feed.entry) || [];
     
-    // 如果接口返回空数据，直接返回错误提示
     if (!apps.length) return '获取榜单失败，可能 Apple 接口暂时繁忙。';
 
     let resultText = `${regionName}${chartType}\n${getFormattedTime()}\n\n`;
 
     resultText += apps.map((app, idx) => {
-      // 【修改 3】旧版数据结构解析（兼容性写法）
       const appId = app.id && app.id.attributes ? app.id.attributes['im:id'] : '';
       const appName = (app['im:name'] && app['im:name'].label) || '未知应用';
       
-      // 解析链接：旧版接口的 link 可能是数组，取第一个作为链接
       let appUrl = '';
       if (Array.isArray(app.link) && app.link.length > 0) {
           appUrl = app.link[0].attributes.href;
@@ -191,7 +186,6 @@ async function handleChartQuery(regionName, chartType) {
           appUrl = app.link.attributes.href;
       }
 
-      // 过滤黑名单
       if (BLOCKED_APP_IDS.has(appId)) return `${idx + 1}、${appName}`;
       return appUrl ? `${idx + 1}、<a href="${appUrl}">${appName}</a>` : `${idx + 1}、${appName}`;
     }).join('\n');
@@ -201,7 +195,6 @@ async function handleChartQuery(regionName, chartType) {
     resultText += `\n\n${SOURCE_NOTE}`;
     return resultText;
   } catch (e) {
-    // 打印具体错误日志，方便你在 Vercel 后台查看
     console.error('Chart Query Error:', e.message || e);
     return '获取榜单失败，请稍后再试。';
   }
@@ -225,6 +218,39 @@ function formatPrice(r) {
   return '未知';
 }
 
+// 【新增功能】获取招商银行实时汇率
+async function fetchCmbExchangeRate(targetCurrencyCode) {
+  // 如果原币种就是人民币，不需要换算
+  if (!targetCurrencyCode || targetCurrencyCode.toUpperCase() === 'CNY') return null;
+  
+  try {
+    // 调用招商银行公开 API
+    const url = 'https://fx.cmbchina.com/api/v1/fx/rate';
+    const { data } = await axios.get(url, { timeout: 3000 });
+    
+    // 解析返回的数据 (招行通常返回一个数组)
+    const rateList = Array.isArray(data) ? data : (data.body || []);
+    
+    // 查找对应币种 (例如 'USD' 或 'JPY')
+    // 招行 API 的字段通常包含 ziCode (币种代码) 和 cenPrice (中间价) 或 huiSell (现汇卖出价)
+    const item = rateList.find(r => 
+      r.ziCode === targetCurrencyCode.toUpperCase() || 
+      r.cyEng === targetCurrencyCode.toUpperCase()
+    );
+
+    if (item) {
+      // 优先使用“现汇卖出价”(huiSell) 或者“中间价”(cenPrice)
+      // ⚠️ 注意：银行汇率通常是“每100外币”的价格，例如美元是 724.12，所以计算时要除以 100
+      const rate = parseFloat(item.huiSell || item.cenPrice || item.rate || 0);
+      return rate > 0 ? rate : null;
+    }
+  } catch (e) {
+    console.error('CMB Rate Fetch Error:', e.message); // 出错时不中断主流程，只是看日志
+  }
+  return null;
+}
+
+// 【功能 2：价格查询】已集成汇率换算
 async function handlePriceQuery(appName, regionName, isDefaultSearch) {
   const code = getCountryCode(regionName);
   if (!code) return `不支持的地区或格式错误：${regionName}`;
@@ -239,10 +265,25 @@ async function handlePriceQuery(appName, regionName, isDefaultSearch) {
     const link = `<a href="${best.trackViewUrl}">${best.trackName}</a>`;
     const priceText = formatPrice(best);
 
-    let replyText = `您搜索的“${appName}”最匹配的结果是：\n\n${link}\n\n地区：${regionName}\n价格：${priceText}\n时间：${getFormattedTime()}`;
+    let replyText = `您搜索的“${appName}”最匹配的结果是：\n\n${link}\n\n地区：${regionName}\n价格：${priceText}`;
+
+    // --- 汇率换算逻辑开始 ---
+    if (typeof best.price === 'number' && best.price > 0 && best.currency) {
+      const rate = await fetchCmbExchangeRate(best.currency);
+      if (rate) {
+        // 计算公式：原价 * (汇率 / 100)
+        const cnyPrice = (best.price * (rate / 100)).toFixed(2);
+        replyText += ` (≈ ¥${cnyPrice})`;
+      }
+    }
+    // --- 汇率换算逻辑结束 ---
+
+    replyText += `\n时间：${getFormattedTime()}`;
     if (isDefaultSearch) replyText += `\n\n想查其他地区？试试发送：\n价格 ${appName} 日本`;
+    
     return replyText + `\n\n${SOURCE_NOTE}`;
-  } catch {
+  } catch (e) {
+    console.error('Price Query Error:', e);
     return '查询价格失败，请稍后再试。';
   }
 }
