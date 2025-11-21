@@ -71,8 +71,30 @@ async function handlePostRequest(req, res) {
         replyContent = await handleChartQuery(chartMatch[1].trim(), chartMatch[2]);
       } else if (priceMatchAdvanced && isSupportedRegion(priceMatchAdvanced[2])) {
         replyContent = await handlePriceQuery(priceMatchAdvanced[1].trim(), priceMatchAdvanced[2].trim(), false);
+      } else if (priceMatchAdvanced && isSupportedRegion(priceMatchAdvanced[2])) {
+        replyContent = await handlePriceQuery(priceMatchAdvanced[1].trim(), priceMatchAdvanced[2].trim(), false);
+      
+      // 【核心修改】优化了这里：智能识别无空格的“应用名+国家”
       } else if (priceMatchSimple) {
-        replyContent = await handlePriceQuery(priceMatchSimple[1].trim(), '美国', true);
+        let queryAppName = priceMatchSimple[1].trim();
+        let targetRegion = '美国'; // 默认地区
+        let isDefaultSearch = true;
+
+        // 智能后缀检测：如果用户输入了 "价格Minecraft日本" (没空格)
+        // 我们遍历所有支持的国家名，检查查询词是否以某个国家名结尾
+        for (const countryName in ALL_SUPPORTED_REGIONS) {
+          // 检查是否以该国家名结尾，且应用名长度大于国家名长度（防止用户只发了 "价格 日本"）
+          if (queryAppName.endsWith(countryName) && queryAppName.length > countryName.length) {
+            targetRegion = countryName;
+            // 把国家名从末尾切掉，剩下的就是应用名
+            queryAppName = queryAppName.slice(0, -countryName.length).trim();
+            isDefaultSearch = false; 
+            break; // 找到匹配的国家就停止，不再继续遍历
+          }
+        }
+
+        replyContent = await handlePriceQuery(queryAppName, targetRegion, isDefaultSearch);
+      
       } else if (osAllMatch) {
         replyContent = await handleSimpleAllOsUpdates();
       } else if (osUpdateMatch) {
@@ -539,3 +561,4 @@ function determinePlatformsFromDevices(devices) {
 
     return platforms;
 }
+
