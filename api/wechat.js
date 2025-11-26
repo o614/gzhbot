@@ -4,7 +4,7 @@ const axios = require('axios');
 const { Parser, Builder } = require('xml2js');
 const https = require('https');
 
-// 引入外部数据文件
+// 引入外部数据文件 (保持分离结构)
 const { ALL_SUPPORTED_REGIONS, DSF_MAP, BLOCKED_APP_IDS, TARGET_COUNTRIES_FOR_AVAILABILITY } = require('./consts');
 
 const WECHAT_TOKEN = process.env.WECHAT_TOKEN;
@@ -61,8 +61,11 @@ async function handlePostRequest(req, res) {
       const priceMatchSimple = content.match(/^价格\s*(.+)$/i); 
       const switchRegionMatch = content.match(/^(切换|地区)\s*([a-zA-Z\u4e00-\u9fa5]+)$/i); 
       const availabilityMatch = content.match(/^查询\s*(.+)$/i); 
-      const osAllMatch = /^系统更新$/i.test(content); 
-      const osUpdateMatch = content.match(/^更新\s*(iOS|iPadOS|macOS|watchOS|tvOS|visionOS)?$/i); 
+      const osAllMatch = /^系统更新$/i.test(content);
+      
+      // 【修改 1】OS指令正则更新：直接匹配 iOS, iPadOS 等单词，不区分大小写，不需要"更新"前缀
+      const osUpdateMatch = content.match(/^(iOS|iPadOS|macOS|watchOS|tvOS|visionOS)$/i); 
+      
       const iconMatch = content.match(/^图标\s*(.+)$/i); 
 
       if (chartV2Match && isSupportedRegion(chartV2Match[1])) {
@@ -71,34 +74,26 @@ async function handlePostRequest(req, res) {
         replyContent = await handleChartQuery(chartMatch[1].trim(), chartMatch[2]);
       } else if (priceMatchAdvanced && isSupportedRegion(priceMatchAdvanced[2])) {
         replyContent = await handlePriceQuery(priceMatchAdvanced[1].trim(), priceMatchAdvanced[2].trim(), false);
-      } else if (priceMatchAdvanced && isSupportedRegion(priceMatchAdvanced[2])) {
-        replyContent = await handlePriceQuery(priceMatchAdvanced[1].trim(), priceMatchAdvanced[2].trim(), false);
-      
-      // 【核心修改】优化了这里：智能识别无空格的“应用名+国家”
       } else if (priceMatchSimple) {
+        // 智能无空格匹配逻辑
         let queryAppName = priceMatchSimple[1].trim();
-        let targetRegion = '美国'; // 默认地区
+        let targetRegion = '美国';
         let isDefaultSearch = true;
-
-        // 智能后缀检测：如果用户输入了 "价格Minecraft日本" (没空格)
-        // 我们遍历所有支持的国家名，检查查询词是否以某个国家名结尾
         for (const countryName in ALL_SUPPORTED_REGIONS) {
-          // 检查是否以该国家名结尾，且应用名长度大于国家名长度（防止用户只发了 "价格 日本"）
           if (queryAppName.endsWith(countryName) && queryAppName.length > countryName.length) {
             targetRegion = countryName;
-            // 把国家名从末尾切掉，剩下的就是应用名
             queryAppName = queryAppName.slice(0, -countryName.length).trim();
             isDefaultSearch = false; 
-            break; // 找到匹配的国家就停止，不再继续遍历
+            break; 
           }
         }
-
         replyContent = await handlePriceQuery(queryAppName, targetRegion, isDefaultSearch);
-      
+
       } else if (osAllMatch) {
         replyContent = await handleSimpleAllOsUpdates();
       } else if (osUpdateMatch) {
-        const platform = (osUpdateMatch[1] || 'iOS').trim();
+        // 【修改 2】直接获取捕获到的系统名 (例如 "ios")
+        const platform = osUpdateMatch[1].trim();
         replyContent = await handleDetailedOsUpdate(platform);
       } else if (switchRegionMatch && isSupportedRegion(switchRegionMatch[2])) {
         replyContent = handleRegionSwitch(switchRegionMatch[2].trim());
@@ -181,7 +176,7 @@ async function getJSON(url, { timeout = 6000, retries = 1 } = {}) {
   throw lastErr;
 }
 
-// 【榜单查询】旧版接口
+// 榜单查询 (旧版接口)
 async function handleChartQuery(regionName, chartType) {
   const regionCode = getCountryCode(regionName);
   if (!regionCode) return '不支持的地区或格式错误。';
@@ -240,24 +235,16 @@ function formatPrice(r) {
   return '未知';
 }
 
-// 【核心修改】改用 Frankfurter 开源汇率接口，支持 Vercel
+// 汇率查询 (Frankfurter V3.0)
 async function fetchExchangeRate(targetCurrencyCode) {
-  // 如果是人民币，或者没有货币代码，直接返回
   if (!targetCurrencyCode || targetCurrencyCode.toUpperCase() === 'CNY') return null;
-  
   try {
-    // Frankfurter API: 专门面向开发者，不拦截云服务器 IP
-    // 格式: https://api.frankfurter.app/latest?from=USD&to=CNY
     const url = `https://api.frankfurter.app/latest?from=${targetCurrencyCode.toUpperCase()}&to=CNY`;
     const { data } = await axios.get(url, { timeout: 3000 });
-    
-    // 接口返回格式: { amount: 1.0, base: "USD", date: "2023-xx-xx", rates: { CNY: 7.24 } }
     if (data && data.rates && data.rates.CNY) {
       return data.rates.CNY;
     }
   } catch (e) {
-    // 如果货币不支持（例如某些极小众货币），或者网络超时，记录日志但不报错
-    // 常见支持：USD, JPY, EUR, GBP, KRW, TRL 等
     console.error(`Exchange Rate Error (${targetCurrencyCode}):`, e.message);
   }
   return null;
@@ -279,19 +266,16 @@ async function handlePriceQuery(appName, regionName, isDefaultSearch) {
 
     let replyText = `您搜索的“${appName}”最匹配的结果是：\n\n${link}\n\n地区：${regionName}\n价格：${priceText}`;
 
-    // --- 汇率换算逻辑 (V3.0) ---
     if (typeof best.price === 'number' && best.price > 0 && best.currency) {
-      // 获取汇率 (直接返回 7.24 这种格式)
       const rate = await fetchExchangeRate(best.currency);
       if (rate) {
-        // 计算价格：原价 * 汇率
         const cnyPrice = (best.price * rate).toFixed(2);
         replyText += ` (≈ ¥${cnyPrice})`;
       }
     }
-    // --- 逻辑结束 ---
 
     replyText += `\n时间：${getFormattedTime()}`;
+    // 【修改 3】去掉建议指令中的空格
     if (isDefaultSearch) replyText += `\n\n想查其他地区？试试发送：\n价格${appName}日本`;
     
     return replyText + `\n\n${SOURCE_NOTE}`;
@@ -435,6 +419,7 @@ function toBeijingYMD(s) {
   return `${y}-${m}-${d2}`;
 }
 
+// 【修改 4】系统更新概览：链接优化 (去掉"更新"和"详情"文字，变成两列蓝色可点击)
 async function handleSimpleAllOsUpdates() {
   try {
     const data = await fetchGdmf();
@@ -448,7 +433,17 @@ async function handleSimpleAllOsUpdates() {
       }
     }
     if (!results.length) return '暂未获取到系统版本信息，请稍后再试。';
-    return `最新系统版本：\n\n${results.join('\n')}\n\n如需查看详细版本，请发送：\n更新 iOS、更新 macOS、更新 watchOS...\n\n*数据来源 Apple 官方*`;
+
+    let replyText = `最新系统版本：\n\n${results.join('\n')}\n\n查看详情：\n`;
+    
+    // 生成蓝色点击链接: 微信协议 <a href="weixin://bizmsgmenu?msgmenucontent=关键词&msgmenuid=ID">显示文字</a>
+    // 排版：使用空格模拟两列布局
+    replyText += `› <a href="weixin://bizmsgmenu?msgmenucontent=iOS&msgmenuid=iOS">iOS</a>      › <a href="weixin://bizmsgmenu?msgmenucontent=iPadOS&msgmenuid=iPadOS">iPadOS</a>\n`;
+    replyText += `› <a href="weixin://bizmsgmenu?msgmenucontent=macOS&msgmenuid=macOS">macOS</a>    › <a href="weixin://bizmsgmenu?msgmenucontent=watchOS&msgmenuid=watchOS">watchOS</a>\n`;
+    replyText += `› <a href="weixin://bizmsgmenu?msgmenucontent=tvOS&msgmenuid=tvOS">tvOS</a>     › <a href="weixin://bizmsgmenu?msgmenucontent=visionOS&msgmenuid=visionOS">visionOS</a>\n`;
+    replyText += `\n${SOURCE_NOTE}`;
+
+    return replyText;
   } catch (e) {
     console.error('Error in handleSimpleAllOsUpdates:', e.message || e);
     return '查询系统版本失败，请稍后再试。';
@@ -561,5 +556,3 @@ function determinePlatformsFromDevices(devices) {
 
     return platforms;
 }
-
-
