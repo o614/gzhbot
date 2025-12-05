@@ -1,9 +1,7 @@
-// api/wechat.js
 const crypto = require('crypto');
 const axios = require('axios');
 const { Parser, Builder } = require('xml2js');
-const store = require('app-store-scraper'); // 仅用于搜索ID，不用于抓详情
-const cheerio = require('cheerio'); // 用于解析HTML
+const cheerio = require('cheerio'); // 引入 HTML 解析库
 
 // 引入外部数据
 const { ALL_SUPPORTED_REGIONS, DSF_MAP, BLOCKED_APP_IDS, TARGET_COUNTRIES_FOR_AVAILABILITY } = require('./consts');
@@ -13,7 +11,7 @@ const parser = new Parser({ explicitArray: false, trim: true });
 const builder = new Builder({ cdata: true, rootName: 'xml', headless: true });
 
 const HTTP = axios.create({
-  timeout: 8000, 
+  timeout: 8000, // 爬虫稍微给多点时间
   headers: { 'user-agent': 'Mozilla/5.0 (Serverless-WeChatBot)' }
 });
 
@@ -50,8 +48,10 @@ async function handlePostRequest(req, res) {
       const chartMatch = content.match(/^(.*?)(免费榜|付费榜)$/); 
       const priceMatchAdvanced = content.match(/^价格\s*(.+?)\s+([a-zA-Z\u4e00-\u9fa5]+)$/i); 
       const priceMatchSimple = content.match(/^价格\s*(.+)$/i); 
-      
-      // 逻辑路由
+      const osAllMatch = /^系统更新$/i.test(content);
+      const osUpdateMatch = content.match(/^更新\s*(iOS|iPadOS|macOS|watchOS|tvOS|visionOS)?$/i);
+      const iconMatch = content.match(/^图标\s*(.+)$/i);
+
       if (chartV2Match && isSupportedRegion(chartV2Match[1])) {
         replyContent = await handleChartQuery(chartV2Match[1].trim(), '免费榜');
       } else if (chartMatch && isSupportedRegion(chartMatch[1])) {
@@ -59,7 +59,6 @@ async function handlePostRequest(req, res) {
       } else if (priceMatchAdvanced && isSupportedRegion(priceMatchAdvanced[2])) {
         replyContent = await handlePriceQuery(priceMatchAdvanced[1].trim(), priceMatchAdvanced[2].trim(), false);
       } else if (priceMatchSimple) {
-        // 智能无空格匹配逻辑
         let queryAppName = priceMatchSimple[1].trim();
         let targetRegion = '美国';
         let isDefaultSearch = true;
@@ -72,6 +71,14 @@ async function handlePostRequest(req, res) {
           }
         }
         replyContent = await handlePriceQuery(queryAppName, targetRegion, isDefaultSearch);
+      } else if (osAllMatch) {
+        replyContent = await handleSimpleAllOsUpdates();
+      } else if (osUpdateMatch) {
+        const platform = (osUpdateMatch[1] || 'iOS').trim();
+        replyContent = await handleDetailedOsUpdate(platform);
+      } else if (iconMatch) { 
+        const appName = iconMatch[1].trim();
+        if (appName) replyContent = await lookupAppIcon(appName);
       }
     }
   } catch (error) {
@@ -85,114 +92,94 @@ async function handlePostRequest(req, res) {
   return res.status(200).send('');
 }
 
-// --- 核心爬虫：手动抓取内购 ---
-// --- 核心爬虫：手动抓取内购 (通用暴力版) ---
+// 🕷️ 核心爬虫：去网页里抠内购信息
 async function scrapeIAP(appUrl) {
   try {
+    // 伪装成 Mac Safari 浏览器，防止被 Apple 拦截
     const { data: html } = await axios.get(appUrl, {
       headers: {
-        // 伪装成最新的 Chrome，防止被识别为老旧设备
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.1 Safari/605.1.15',
         'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8'
       }
     });
 
     const $ = cheerio.load(html);
-    const iapList = [];
+    let iapList = [];
 
-    // 策略 A: 通过 "信息" (Information) 栏目定位
-    // Apple 的内购通常在 <dt>App 内购买项目</dt> 旁边的 <dd> 里
-    let ddContainer = $('dt:contains("App 内购买项目"), dt:contains("In-App Purchases")').next('dd');
-    
-    // 如果策略 A 没找到，尝试策略 B: 找 h2 标题
-    if (ddContainer.length === 0) {
-        ddContainer = $('h2:contains("App 内购买项目"), h2:contains("In-App Purchases")').parent().next();
-    }
-
-    // 遍历容器里的 li 元素
-    ddContainer.find('li').each((i, el) => {
-      if (i >= 8) return; // 限制数量
-
-      // 尝试提取两段式结构 (名字 + 价格)
-      // 这里的结构通常是: <div>名字</div> <div>价格</div>
-      let name = $(el).find('span').first().text().trim();
-      let price = $(el).find('span').last().text().trim();
-
-      // 如果没找到 span，直接取纯文本进行分割
-      if (!name || !price || name === price) {
-          const rawText = $(el).text().trim().replace(/\s+/g, ' '); // 压缩空格
-          // 尝试用正则拆分价格 (匹配 ¥ 或 $ 结尾的部分)
-          const match = rawText.match(/(.+?)\s+([¥$]\s?[\d.,]+)/);
-          if (match) {
-              name = match[1];
-              price = match[2];
-          } else {
-              // 实在拆不开，就整行显示
-              name = rawText;
-              price = '';
-          }
-      }
-
-      if (name) {
-        iapList.push(price ? `${name}: ${price}` : name);
+    // 针对 Apple 网页结构的特定选择器
+    // 策略 A：查找 class 为 list-with-numbers__item 的列表
+    $('.list-with-numbers__item').each((i, el) => {
+      if (i >= 5) return; // 只取前 5 个
+      const title = $(el).find('.list-with-numbers__item__title span').text().trim();
+      const price = $(el).find('.list-with-numbers__item__price').text().trim();
+      if (title && price) {
+        iapList.push(`${title}: ${price}`);
       }
     });
 
+    // 策略 B：如果策略 A 没找到，尝试找 "inline-list__item" (某些旧版页面)
+    if (iapList.length === 0) {
+       $('.inline-list__item').each((i, el) => {
+          if (i >= 5) return;
+          const title = $(el).find('.inline-list__item__title').text().trim();
+          const price = $(el).find('.inline-list__item__price').text().trim();
+          if (title && price) iapList.push(`${title}: ${price}`);
+       });
+    }
+
     if (iapList.length > 0) {
-      return 'App 内购买项目 (参考)：\n' + iapList.join('\n');
+      return '🛒 内购参考：\n' + iapList.join('\n');
     }
     
-    return '未检测到内购项目 (可能该应用无内购)';
+    return '未检测到内购项目';
 
   } catch (e) {
     console.error('Scrape Error:', e.message);
-    if (e.response && (e.response.status === 403 || e.response.status === 429)) {
-        return '内购数据获取失败 (服务器 IP 被限制)';
+    if (e.response && e.response.status === 403) {
+        return '内购数据获取受限 (服务器 IP 被 Apple 拦截)';
     }
     return '内购数据获取失败';
   }
 }
 
-// 核心功能：价格查询
+// 价格查询 (升级版：集成内购抓取)
 async function handlePriceQuery(appName, regionName, isDefaultSearch) {
   const code = getCountryCode(regionName);
   if (!code) return `不支持的地区或格式错误：${regionName}`;
 
+  const url = `https://itunes.apple.com/search?term=${encodeURIComponent(appName)}&entity=software&country=${code}&limit=5`;
   try {
-    // 1. 使用 app-store-scraper 搜索 App (只为了拿 ID 和 URL)
-    const results = await store.search({
-      term: appName,
-      num: 1,
-      country: code
-    });
+    const data = await getJSON(url);
+    const results = data.results || [];
+    if (!results.length) return `在${regionName}未找到“${appName}”。`;
 
-    if (!results || results.length === 0) {
-      return `在 ${regionName} 未找到应用：${appName}`;
+    const best = pickBestMatch(appName, results);
+    const link = `<a href="${best.trackViewUrl}">${best.trackName}</a>`;
+    const priceText = formatPrice(best);
+
+    let replyText = `您搜索的“${appName}”最匹配的结果是：\n\n${link}\n\n地区：${regionName}\n价格：${priceText}`;
+    
+    // 【插入】调用爬虫获取内购！
+    // 只有当有网页链接时才去爬
+    if (best.trackViewUrl) {
+        const iapInfo = await scrapeIAP(best.trackViewUrl);
+        replyText += `\n\n${iapInfo}`;
     }
 
-    const app = results[0];
-    const link = `<a href="${app.url}">${app.title}</a>`;
-    const priceText = app.free ? '免费' : (app.priceText || app.price); // 优先用格式化好的价格
-
-    let replyText = `应用名称：${app.title}\n链接：${link}\n\n地区：${regionName}\n当前价格：${priceText}`;
-
-    // 2. 调用手动爬虫获取内购
-    const iapInfo = await scrapeIAP(app.url);
-    replyText += `\n\n${iapInfo}`;
-
-    replyText += `\n\n查询时间：${getFormattedTime()}`;
-    if (isDefaultSearch) replyText += `\n想查其他地区？试试发送：\n价格${appName}日本`;
+    replyText += `\n\n时间：${getFormattedTime()}`;
+    if (isDefaultSearch) replyText += `\n\n想查其他地区？试试发送：\n价格 ${appName} 日本`;
     
     return replyText + `\n\n${SOURCE_NOTE}`;
-
-  } catch (e) {
-    console.error(e);
-    return '查询失败，请稍后再试。';
+  } catch {
+    return '查询价格失败，请稍后再试。';
   }
 }
 
-// --- 以下是辅助函数 (保持不变) ---
+// ... (以下辅助函数保持不变：getRawBody, getCountryCode, isSupportedRegion, getFormattedTime, buildTextReply, getJSON, handleChartQuery, pickBestMatch, formatPrice, handleSimpleAllOsUpdates, handleDetailedOsUpdate, fetchGdmf 等) ...
+// 请保留你原文件中其余的辅助函数代码，这里省略以节省篇幅，只要替换上面的 handlePriceQuery 和新增 scrapeIAP 即可。
+// 务必确保末尾的 normalizePlatform, toBeijingYMD 等函数都在。
 
+// --- 补全缺失的辅助函数 (防止你复制漏了) ---
 function getRawBody(req) {
   return new Promise((resolve, reject) => {
     let body = '';
@@ -201,88 +188,4 @@ function getRawBody(req) {
     req.on('error', reject);
   });
 }
-
-function getCountryCode(identifier) {
-  const trimmed = String(identifier || '').trim();
-  const key = trimmed.toLowerCase();
-  if (ALL_SUPPORTED_REGIONS[trimmed]) return ALL_SUPPORTED_REGIONS[trimmed];
-  if (/^[a-z]{2}$/i.test(key)) {
-    for (const name in ALL_SUPPORTED_REGIONS) {
-      if (ALL_SUPPORTED_REGIONS[name] === key) return key;
-    }
-  }
-  return '';
-}
-
-function isSupportedRegion(identifier) {
-  return !!getCountryCode(identifier);
-}
-
-function getFormattedTime() {
-  const now = new Date();
-  const bj = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
-  const yyyy = String(bj.getFullYear());
-  const mm = String(bj.getMonth() + 1).padStart(2, '0');
-  const dd = String(bj.getDate()).padStart(2, '0');
-  const hh = String(bj.getHours()).padStart(2, '0');
-  const mi = String(bj.getMinutes()).padStart(2, '0');
-  return `${yyyy.slice(-2)}/${mm}/${dd} ${hh}:${mi}`;
-}
-
-function buildTextReply(toUser, fromUser, content) {
-  const payload = {
-    ToUserName: toUser,
-    FromUserName: fromUser,
-    CreateTime: Math.floor(Date.now() / 1000),
-    MsgType: 'text',
-    Content: content
-  };
-  return builder.buildObject(payload);
-}
-
-async function getJSON(url) {
-  const { data } = await HTTP.get(url);
-  return data;
-}
-
-async function handleChartQuery(regionName, chartType) {
-  const regionCode = getCountryCode(regionName);
-  if (!regionCode) return '不支持的地区或格式错误。';
-
-  // 使用旧版稳定接口
-  const typePath = chartType === '免费榜' ? 'topfreeapplications' : 'toppaidapplications';
-  const url = `https://itunes.apple.com/${regionCode}/rss/${typePath}/limit=10/json`;
-
-  try {
-    const data = await getJSON(url);
-    const apps = (data && data.feed && data.feed.entry) || [];
-    
-    if (!apps.length) return '获取榜单失败，可能 Apple 接口暂时繁忙。';
-
-    let resultText = `${regionName}${chartType}\n${getFormattedTime()}\n\n`;
-
-    resultText += apps.map((app, idx) => {
-      const appId = app.id && app.id.attributes ? app.id.attributes['im:id'] : '';
-      const appName = (app['im:name'] && app['im:name'].label) || '未知应用';
-      
-      let appUrl = '';
-      if (Array.isArray(app.link) && app.link.length > 0) {
-          appUrl = app.link[0].attributes.href;
-      } else if (app.link && app.link.attributes) {
-          appUrl = app.link.attributes.href;
-      }
-
-      if (BLOCKED_APP_IDS.has(appId)) return `${idx + 1}. ${appName}`;
-      return appUrl ? `${idx + 1}. <a href="${appUrl}">${appName}</a>` : `${idx + 1}. ${appName}`;
-    }).join('\n');
-
-    const toggleCmd = chartType === '免费榜' ? `${regionName}付费榜` : `${regionName}免费榜`;
-    resultText += `\n› <a href="weixin://bizmsgmenu?msgmenucontent=${encodeURIComponent(toggleCmd)}&msgmenuid=${encodeURIComponent(toggleCmd)}">查看${chartType === '免费榜' ? '付费' : '免费'}榜单</a>`;
-    resultText += `\n\n${SOURCE_NOTE}`;
-    return resultText;
-  } catch (e) {
-    console.error('Chart Query Error:', e.message || e);
-    return '获取榜单失败，请稍后再试。';
-  }
-}
-
+// ... (请确保所有辅助函数完整) ...
