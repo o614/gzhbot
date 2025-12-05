@@ -3,33 +3,21 @@ const crypto = require('crypto');
 const axios = require('axios');
 const { Parser, Builder } = require('xml2js');
 const https = require('https');
-const store = require('app-store-scraper'); // 搜索 App ID 用
-const cheerio = require('cheerio'); // 解析网页内购用
 
-// 引入外部数据
+// 引入外部数据文件 (保持分离结构)
 const { ALL_SUPPORTED_REGIONS, DSF_MAP, BLOCKED_APP_IDS, TARGET_COUNTRIES_FOR_AVAILABILITY } = require('./consts');
 
 const WECHAT_TOKEN = process.env.WECHAT_TOKEN;
+
 const parser = new Parser({ explicitArray: false, trim: true });
 const builder = new Builder({ cdata: true, rootName: 'xml', headless: true });
 
-// 引入 Vercel KV (用于验证码功能)
-const { kv } = require('@vercel/kv');
-
 const HTTP = axios.create({
-  timeout: 8000, 
+  timeout: 6000, 
   headers: { 'user-agent': 'Mozilla/5.0 (Serverless-WeChatBot)' }
 });
 
 const SOURCE_NOTE = '*数据来源 Apple 官方*';
-
-// 定义比价的目标地区
-const TARGET_COMPARE_REGIONS = [
-  { code: 'cn', emoji: '🇨🇳', name: '中国' },
-  { code: 'us', emoji: '🇺🇸', name: '美国' },
-  { code: 'jp', emoji: '🇯🇵', name: '日本' },
-  { code: 'tr', emoji: '🇹🇷', name: '土耳其' }
-];
 
 module.exports = async (req, res) => {
   if (req.method === 'GET') return handleVerification(req, res);
@@ -56,8 +44,14 @@ async function handlePostRequest(req, res) {
     message = parsedXml.xml || {};
 
     if (message.MsgType === 'event' && message.Event === 'subscribe') {
-        // 关注欢迎语
-        replyContent = `欢迎关注！\n\n发送【价格 应用名】查询内购和价格\n发送【榜单 美国】查看榜单\n发送【系统更新】查看最新iOS版本`;
+      replyContent =
+        `恭喜！你发现了果粉秘密基地\n\n` +
+        `› <a href="weixin://bizmsgmenu?msgmenucontent=付款方式&msgmenuid=付款方式">付款方式</a>\n获取注册地址信息\n\n` +
+        `› <a href="weixin://bizmsgmenu?msgmenucontent=查询TikTok&msgmenuid=1">查询TikTok</a>\n热门地区上架查询\n\n` +
+        `› <a href="weixin://bizmsgmenu?msgmenucontent=榜单美国&msgmenuid=3">榜单美国</a>\n全球免费付费榜单\n\n` +
+        `› <a href="weixin://bizmsgmenu?msgmenucontent=价格YouTube&msgmenuid=2">价格YouTube</a>\n应用价格优惠查询\n\n` +
+        `› <a href="weixin://bizmsgmenu?msgmenucontent=切换美国&msgmenuid=4">切换美国</a>\n应用商店随意切换\n\n` +
+        `› <a href="weixin://bizmsgmenu?msgmenucontent=图标QQ&msgmenuid=5">图标QQ</a>\n获取官方高清图标\n\n更多服务请戳底部菜单栏了解`;
     } else if (message.MsgType === 'text' && typeof message.Content === 'string') {
       const content = message.Content.trim();
       
@@ -68,27 +62,17 @@ async function handlePostRequest(req, res) {
       const switchRegionMatch = content.match(/^(切换|地区)\s*([a-zA-Z\u4e00-\u9fa5]+)$/i); 
       const availabilityMatch = content.match(/^查询\s*(.+)$/i); 
       const osAllMatch = /^系统更新$/i.test(content);
-      const osUpdateMatch = content.match(/^更新\s*(iOS|iPadOS|macOS|watchOS|tvOS|visionOS)?$/i);
-      const iconMatch = content.match(/^图标\s*(.+)$/i);
+      
+      // 【修改 1】OS指令正则更新：直接匹配 iOS, iPadOS 等单词，不区分大小写，不需要"更新"前缀
+      const osUpdateMatch = content.match(/^(iOS|iPadOS|macOS|watchOS|tvOS|visionOS)$/i); 
+      
+      const iconMatch = content.match(/^图标\s*(.+)$/i); 
 
-      // 1. 验证码逻辑 (放在最前面)
-      if (/^\d{4}$/.test(content)) {
-        const status = await kv.get(`login:${content}`);
-        if (status === 'pending') {
-          await kv.set(`login:${content}`, 'ok', { EX: 60 });
-          replyContent = "✅ 验证成功！\n\n网页正在自动解锁，请查看电脑屏幕。";
-        } else {
-          replyContent = "❌ 验证码无效或已过期。\n\n请刷新网页获取新的验证码。";
-        }
-      }
-      // 2. 榜单查询
-      else if (chartV2Match && isSupportedRegion(chartV2Match[1])) {
+      if (chartV2Match && isSupportedRegion(chartV2Match[1])) {
         replyContent = await handleChartQuery(chartV2Match[1].trim(), '免费榜');
       } else if (chartMatch && isSupportedRegion(chartMatch[1])) {
         replyContent = await handleChartQuery(chartMatch[1].trim(), chartMatch[2]);
-      } 
-      // 3. 价格查询 (带内购抓取)
-      else if (priceMatchAdvanced && isSupportedRegion(priceMatchAdvanced[2])) {
+      } else if (priceMatchAdvanced && isSupportedRegion(priceMatchAdvanced[2])) {
         replyContent = await handlePriceQuery(priceMatchAdvanced[1].trim(), priceMatchAdvanced[2].trim(), false);
       } else if (priceMatchSimple) {
         // 智能无空格匹配逻辑
@@ -104,12 +88,12 @@ async function handlePostRequest(req, res) {
           }
         }
         replyContent = await handlePriceQuery(queryAppName, targetRegion, isDefaultSearch);
-      }
-      // 4. 其他指令
-      else if (osAllMatch) {
+
+      } else if (osAllMatch) {
         replyContent = await handleSimpleAllOsUpdates();
       } else if (osUpdateMatch) {
-        const platform = (osUpdateMatch[1] || 'iOS').trim();
+        // 【修改 2】直接获取捕获到的系统名 (例如 "ios")
+        const platform = osUpdateMatch[1].trim();
         replyContent = await handleDetailedOsUpdate(platform);
       } else if (switchRegionMatch && isSupportedRegion(switchRegionMatch[2])) {
         replyContent = handleRegionSwitch(switchRegionMatch[2].trim());
@@ -128,107 +112,8 @@ async function handlePostRequest(req, res) {
     const xml = buildTextReply(message.FromUserName, message.ToUserName, replyContent);
     return res.setHeader('Content-Type', 'application/xml').status(200).send(xml);
   }
-  return res.status(200).send('success');
+  return res.status(200).send('');
 }
-
-// --- 核心爬虫：手动抓取内购 (通用暴力版) ---
-async function scrapeIAP(appUrl) {
-  try {
-    const { data: html } = await axios.get(appUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8'
-      }
-    });
-
-    const $ = cheerio.load(html);
-    const iapList = [];
-
-    // 策略 A: 找 dt 标签
-    let ddContainer = $('dt:contains("App 内购买项目"), dt:contains("In-App Purchases")').next('dd');
-    
-    // 策略 B: 找 h2 标题
-    if (ddContainer.length === 0) {
-        ddContainer = $('h2:contains("App 内购买项目"), h2:contains("In-App Purchases")').parent().next();
-    }
-
-    ddContainer.find('li').each((i, el) => {
-      if (i >= 8) return; 
-
-      let name = $(el).find('span').first().text().trim();
-      let price = $(el).find('span').last().text().trim();
-
-      if (!name || !price || name === price) {
-          const rawText = $(el).text().trim().replace(/\s+/g, ' '); 
-          const match = rawText.match(/(.+?)\s+([¥$]\s?[\d.,]+)/);
-          if (match) {
-              name = match[1];
-              price = match[2];
-          } else {
-              name = rawText;
-              price = '';
-          }
-      }
-
-      if (name) {
-        iapList.push(price ? `${name}: ${price}` : name);
-      }
-    });
-
-    if (iapList.length > 0) {
-      return '🛒 内购项目 (参考)：\n' + iapList.join('\n');
-    }
-    
-    return '✅ 未检测到内购项目';
-
-  } catch (e) {
-    console.error('Scrape Error:', e.message);
-    if (e.response && (e.response.status === 403 || e.response.status === 429)) {
-        return '❌ 内购获取失败 (IP被限制)';
-    }
-    return '❌ 内购获取失败';
-  }
-}
-
-// --- 价格查询主函数 ---
-async function handlePriceQuery(appName, regionName, isDefaultSearch) {
-  const code = getCountryCode(regionName);
-  if (!code) return `不支持的地区或格式错误：${regionName}`;
-
-  try {
-    // 1. 搜索 App
-    const results = await store.search({
-      term: appName,
-      num: 1,
-      country: code
-    });
-
-    if (!results || results.length === 0) {
-      return `在 ${regionName} 未找到应用：${appName}`;
-    }
-
-    const app = results[0];
-    const link = `<a href="${app.url}">${app.title}</a>`;
-    const priceText = app.free ? '免费' : (app.priceText || app.price); 
-
-    let replyText = `🔍 ${app.title}\n\n${link}\n\n地区：${regionName}\n价格：${priceText}`;
-
-    // 2. 爬取内购
-    const iapInfo = await scrapeIAP(app.url);
-    replyText += `\n\n${iapInfo}`;
-
-    replyText += `\n\n时间：${getFormattedTime()}`;
-    if (isDefaultSearch) replyText += `\n\n想查其他地区？试试发送：\n价格 ${appName} 日本`;
-    
-    return replyText + `\n\n${SOURCE_NOTE}`;
-
-  } catch (e) {
-    console.error(e);
-    return '查询失败，请稍后再试。';
-  }
-}
-
-// --- 辅助函数大全 (这次全都在这了！) ---
 
 function getRawBody(req) {
   return new Promise((resolve, reject) => {
@@ -239,7 +124,6 @@ function getRawBody(req) {
   });
 }
 
-// 【之前缺失的函数 1】
 function getCountryCode(identifier) {
   const trimmed = String(identifier || '').trim();
   const key = trimmed.toLowerCase();
@@ -252,7 +136,6 @@ function getCountryCode(identifier) {
   return '';
 }
 
-// 【之前缺失的函数 2】
 function isSupportedRegion(identifier) {
   return !!getCountryCode(identifier);
 }
@@ -293,7 +176,7 @@ async function getJSON(url, { timeout = 6000, retries = 1 } = {}) {
   throw lastErr;
 }
 
-// 榜单查询
+// 榜单查询 (旧版接口)
 async function handleChartQuery(regionName, chartType) {
   const regionCode = getCountryCode(regionName);
   if (!regionCode) return '不支持的地区或格式错误。';
@@ -350,6 +233,56 @@ function formatPrice(r) {
     return r.price === 0 ? '免费' : `${r.currency || ''} ${r.price.toFixed(2)}`.trim();
   }
   return '未知';
+}
+
+// 汇率查询 (Frankfurter V3.0)
+async function fetchExchangeRate(targetCurrencyCode) {
+  if (!targetCurrencyCode || targetCurrencyCode.toUpperCase() === 'CNY') return null;
+  try {
+    const url = `https://api.frankfurter.app/latest?from=${targetCurrencyCode.toUpperCase()}&to=CNY`;
+    const { data } = await axios.get(url, { timeout: 3000 });
+    if (data && data.rates && data.rates.CNY) {
+      return data.rates.CNY;
+    }
+  } catch (e) {
+    console.error(`Exchange Rate Error (${targetCurrencyCode}):`, e.message);
+  }
+  return null;
+}
+
+async function handlePriceQuery(appName, regionName, isDefaultSearch) {
+  const code = getCountryCode(regionName);
+  if (!code) return `不支持的地区或格式错误：${regionName}`;
+
+  const url = `https://itunes.apple.com/search?term=${encodeURIComponent(appName)}&entity=software&country=${code}&limit=5`;
+  try {
+    const data = await getJSON(url);
+    const results = data.results || [];
+    if (!results.length) return `在${regionName}未找到“${appName}”。`;
+
+    const best = pickBestMatch(appName, results);
+    const link = `<a href="${best.trackViewUrl}">${best.trackName}</a>`;
+    const priceText = formatPrice(best);
+
+    let replyText = `您搜索的“${appName}”最匹配的结果是：\n\n${link}\n\n地区：${regionName}\n价格：${priceText}`;
+
+    if (typeof best.price === 'number' && best.price > 0 && best.currency) {
+      const rate = await fetchExchangeRate(best.currency);
+      if (rate) {
+        const cnyPrice = (best.price * rate).toFixed(2);
+        replyText += ` (≈ ¥${cnyPrice})`;
+      }
+    }
+
+    replyText += `\n时间：${getFormattedTime()}`;
+    // 【修改 3】去掉建议指令中的空格
+    if (isDefaultSearch) replyText += `\n\n想查其他地区？试试发送：\n价格${appName}日本`;
+    
+    return replyText + `\n\n${SOURCE_NOTE}`;
+  } catch (e) {
+    console.error('Price Query Error:', e);
+    return '查询价格失败，请稍后再试。';
+  }
 }
 
 function handleRegionSwitch(regionName) {
@@ -440,18 +373,31 @@ async function lookupAppIcon(appName) {
 async function fetchGdmf() {
   const url = 'https://gdmf.apple.com/v2/pmv';
   const headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
+    // 【修改】只更新了这里的 User-Agent
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'application/json, text/plain, */*'
   };
   const agent = new https.Agent({ rejectUnauthorized: false });
   try {
     const response = await HTTP.get(url, { timeout: 15000, headers: headers, httpsAgent: agent });
     if (!response.data || typeof response.data !== 'object') {
+        console.error('fetchGdmf Error: Received invalid data format from GDMF.');
         throw new Error('Received invalid data format from GDMF.');
     }
     return response.data;
   } catch (error) {
-    throw new Error('fetchGdmf Error');
+    let errorMsg = 'fetchGdmf Error: Request failed.';
+    if (error.response) {
+      errorMsg = `fetchGdmf Error: Request failed with status ${error.response.status}. URL: ${url}`;
+      console.error(errorMsg, 'Response data:', error.response.data);
+    } else if (error.request) {
+      errorMsg = `fetchGdmf Error: No response received. Code: ${error.code || 'N/A'}. URL: ${url}`;
+      console.error(errorMsg, 'Is timeout?', error.code === 'ECONNABORTED');
+    } else {
+      errorMsg = `fetchGdmf Error: Request setup failed or unknown error. Message: ${error.message || 'N/A'}. URL: ${url}`;
+      console.error(errorMsg);
+    }
+    throw new Error(errorMsg);
   }
 }
 
@@ -474,6 +420,7 @@ function toBeijingYMD(s) {
   return `${y}-${m}-${d2}`;
 }
 
+// 【修改 4】系统更新概览：链接优化 (去掉"更新"和"详情"文字，变成两列蓝色可点击)
 async function handleSimpleAllOsUpdates() {
   try {
     const data = await fetchGdmf();
@@ -487,8 +434,19 @@ async function handleSimpleAllOsUpdates() {
       }
     }
     if (!results.length) return '暂未获取到系统版本信息，请稍后再试。';
-    return `最新系统版本：\n\n${results.join('\n')}\n\n如需查看详细版本，请发送：\n更新 iOS、更新 macOS、更新 watchOS...\n\n*数据来源 Apple 官方*`;
+
+    let replyText = `最新系统版本：\n\n${results.join('\n')}\n\n查看详情：\n`;
+    
+    // 生成蓝色点击链接: 微信协议 <a href="weixin://bizmsgmenu?msgmenucontent=关键词&msgmenuid=ID">显示文字</a>
+    // 排版：使用空格模拟两列布局
+    replyText += `› <a href="weixin://bizmsgmenu?msgmenucontent=iOS&msgmenuid=iOS">iOS</a>      › <a href="weixin://bizmsgmenu?msgmenucontent=iPadOS&msgmenuid=iPadOS">iPadOS</a>\n`;
+    replyText += `› <a href="weixin://bizmsgmenu?msgmenucontent=macOS&msgmenuid=macOS">macOS</a>    › <a href="weixin://bizmsgmenu?msgmenucontent=watchOS&msgmenuid=watchOS">watchOS</a>\n`;
+    replyText += `› <a href="weixin://bizmsgmenu?msgmenucontent=tvOS&msgmenuid=tvOS">tvOS</a>     › <a href="weixin://bizmsgmenu?msgmenucontent=visionOS&msgmenuid=visionOS">visionOS</a>\n`;
+    replyText += `\n${SOURCE_NOTE}`;
+
+    return replyText;
   } catch (e) {
+    console.error('Error in handleSimpleAllOsUpdates:', e.message || e);
     return '查询系统版本失败，请稍后再试。';
   }
 }
@@ -508,6 +466,7 @@ async function handleDetailedOsUpdate(inputPlatform = 'iOS') {
 
     const latest = list[0];
     const stableTag = /beta|rc|seed/i.test(JSON.stringify(latest.raw)) ? '' : ' — 正式版';
+
     const latestDateStr = toBeijingYMD(latest.date) || '未知日期';
 
     const lines = list.slice(0,5).map(r=>{
@@ -519,6 +478,7 @@ async function handleDetailedOsUpdate(inputPlatform = 'iOS') {
 
     return `${platform} 最新公开版本：\n版本：${latest.version}（${latest.build}）${stableTag}\n发布时间：${latestDateStr}\n\n近期版本：\n${lines.join('\n')}\n\n查询时间：${getFormattedTime()}\n\n${SOURCE_NOTE}`;
   } catch (e) {
+    console.error('Error in handleDetailedOsUpdate:', e.message || e);
     return '查询系统版本失败，请稍后再试。';
   }
 }
@@ -597,3 +557,4 @@ function determinePlatformsFromDevices(devices) {
 
     return platforms;
 }
+
