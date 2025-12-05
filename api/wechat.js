@@ -237,6 +237,7 @@ function formatPrice(r) {
 }
 
 // 【核心修改】handlePriceQuery：只增加了内购抓取逻辑，其他不变
+// 核心升级：调试版 handlePriceQuery
 async function handlePriceQuery(appName, regionName, isDefaultSearch) {
   const code = getCountryCode(regionName);
   if (!code) return `不支持的地区或格式错误：${regionName}`;
@@ -251,32 +252,41 @@ async function handlePriceQuery(appName, regionName, isDefaultSearch) {
     const link = `<a href="${best.trackViewUrl}">${best.trackName}</a>`;
     const priceText = formatPrice(best);
 
-    let replyText = `您搜索的“${appName}”最匹配的结果是：\n\n${link}\n\n地区：${regionName}\n价格：${priceText}\n时间：${getFormattedTime()}`;
-    
-    // --- 🛒 新增：尝试获取内购信息 ---
+    // 1. 基础回复
+    let replyText = `🔍 ${appName} (调试版)\n\n${link}\n\n地区：${regionName}\n价格：${priceText}`;
+
+    // 2. 尝试抓取内购 (带显性报错)
     try {
-      // 使用 app-store-scraper 获取详情 (这一步是去爬网页)
+      // 告诉用户正在尝试抓取
+      // replyText += `\n\n🔄 正在连接 App Store 获取内购...`; 
+      
       const details = await store.app({ id: best.trackId, country: code });
+      
       if (details && details.inAppPurchases && details.inAppPurchases.length > 0) {
-        replyText += `\n\n🛒 内购项目 (参考)：\n`;
-        // 取前 5 个内购
+        replyText += `\n\n🛒 内购项目 (前5项)：\n`;
         details.inAppPurchases.slice(0, 5).forEach(iap => {
-          // 这里的 iap 可能是字符串也可能是对象，做个兼容处理
           const name = typeof iap === 'string' ? iap : (iap.name || '未知项目');
           const price = (typeof iap === 'object' && iap.price) ? `: ${iap.price}` : '';
           replyText += `• ${name}${price}\n`;
         });
+      } else {
+        replyText += `\n\n✅ 该应用未检测到内购项目。`;
       }
     } catch (scrapeErr) {
-      console.error('IAP Fetch Failed:', scrapeErr.message);
-      // 抓取失败不报错给用户，只显示基础信息
+      // 【关键修改】把错误直接打印出来给用户看！
+      replyText += `\n\n❌ 内购获取失败：\n${scrapeErr.message}`;
+      
+      if (scrapeErr.message.includes('403') || scrapeErr.message.includes('429')) {
+        replyText += `\n(原因：Vercel 服务器 IP 被 Apple 拦截)`;
+      }
     }
-    // --------------------------------
 
-    if (isDefaultSearch) replyText += `\n\n想查其他地区？试试发送：\n价格${appName}日本`; // 保持你改过的无空格建议
+    replyText += `\n\n时间：${getFormattedTime()}`;
+    if (isDefaultSearch) replyText += `\n想查其他地区？试试发送：\n价格${appName}日本`;
+    
     return replyText + `\n\n${SOURCE_NOTE}`;
-  } catch {
-    return '查询价格失败，请稍后再试。';
+  } catch (e) {
+    return `查询基础信息失败：${e.message}`;
   }
 }
 
@@ -552,3 +562,4 @@ function determinePlatformsFromDevices(devices) {
 
     return platforms;
 }
+
