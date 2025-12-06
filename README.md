@@ -4,20 +4,16 @@
 
 <table>
   <tr>
-    <td width="25%"><img src="https://github.com/user-attachments/assets/1d66b0d9-9a2d-4c83-80e0-96a4444cb9c1"></td>
-    <td width="25%"><img src="https://github.com/user-attachments/assets/fcb011d9-5a63-4478-8593-ce2f4085875c"></td>
-    <td width="25%"><img src="https://github.com/user-attachments/assets/a0f28df6-c922-4527-a59c-db87a31d9ec3"></td>
-    <td width="25%"><img src="https://github.com/user-attachments/assets/fdf40a9b-66a9-4ae4-9551-9ac8b469cab1"></td>
+    <td width="33.33%"><img src="https://github.com/user-attachments/assets/1d66b0d9-9a2d-4c83-80e0-96a4444cb9c1"></td>
+    <td width="33.33%"><img src="https://github.com/user-attachments/assets/fcb011d9-5a63-4478-8593-ce2f4085875c"></td>
+    <td width="33.33%"><img src="https://github.com/user-attachments/assets/fdf40a9b-66a9-4ae4-9551-9ac8b469cab1"></td>
   </tr>
-</table>
-<table>
   <tr>
-    <td width="33.3%"><img src="https://github.com/user-attachments/assets/90a5e12b-bbef-4c32-ab28-31ec378142ba"></td>
-    <td width="33.3%"><img src="https://github.com/user-attachments/assets/2851cab2-a412-4087-bc00-58d78db356a7"></td>
-    <td width="33.3%"><img src="https://github.com/user-attachments/assets/4c463be1-a320-4627-94ed-bf6e5b82c8b0"></td>
+    <td width="33.33%"><img src="https://github.com/user-attachments/assets/90a5e12b-bbef-4c32-ab28-31ec378142ba"></td>
+    <td width="33.33%"><img src="https://github.com/user-attachments/assets/2851cab2-a412-4087-bc00-58d78db356a7"></td>
+    <td width="33.33%"><img src="https://github.com/user-attachments/assets/4c463be1-a320-4627-94ed-bf6e5b82c8b0"></td>
   </tr>
 </table>
-
 
 ## ✨ 主要功能
 
