@@ -18,7 +18,7 @@ jobs:
       - name: Run Diagnosis
         env:
           # ⚠️ 这里填你 Cloudflare 或者 Vercel 的最终地址
-          API_URL: 'https://你的域名/api/wechat' 
+          API_URL: 'https://apple.290935.xyz/api/wechat' 
         run: |
           node -e '
             const axios = require("axios");
