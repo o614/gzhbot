@@ -1,4 +1,4 @@
-// api/wechat.js
+// api/wechat.js (v16.0 修复榜单撑破 + 混合排版优化版)
 const crypto = require('crypto');
 const axios = require('axios');
 const { Parser, Builder } = require('xml2js');
@@ -9,8 +9,10 @@ const { ALL_SUPPORTED_REGIONS, DSF_MAP, BLOCKED_APP_IDS, TARGET_COUNTRIES_FOR_AV
 
 const WECHAT_TOKEN = process.env.WECHAT_TOKEN;
 
-// 【新增 1】定义小票分割线常量
+// 🎨 小票分割线
 const SEPARATOR = '------------------------------';
+// 📏 换行阈值 (调低至 24，给混合排版留出安全余量)
+const WRAP_LIMIT = 24;
 
 const parser = new Parser({ explicitArray: false, trim: true });
 const builder = new Builder({ cdata: true, rootName: 'xml', headless: true });
@@ -47,7 +49,6 @@ async function handlePostRequest(req, res) {
     message = parsedXml.xml || {};
 
     if (message.MsgType === 'event' && message.Event === 'subscribe') {
-      // 【修改】应用分割线
       replyContent =
         `恭喜！你发现了果粉秘密基地\n` +
         `${SEPARATOR}\n` +
@@ -69,10 +70,7 @@ async function handlePostRequest(req, res) {
       const switchRegionMatch = content.match(/^(切换|地区)\s*([a-zA-Z\u4e00-\u9fa5]+)$/i); 
       const availabilityMatch = content.match(/^查询\s*(.+)$/i); 
       const osAllMatch = /^系统更新$/i.test(content);
-      
-      // 【修改 1】OS指令正则更新：直接匹配 iOS, iPadOS 等单词，不区分大小写，不需要"更新"前缀
       const osUpdateMatch = content.match(/^(iOS|iPadOS|macOS|watchOS|tvOS|visionOS)$/i); 
-      
       const iconMatch = content.match(/^图标\s*(.+)$/i); 
 
       if (chartV2Match && isSupportedRegion(chartV2Match[1])) {
@@ -82,7 +80,6 @@ async function handlePostRequest(req, res) {
       } else if (priceMatchAdvanced && isSupportedRegion(priceMatchAdvanced[2])) {
         replyContent = await handlePriceQuery(priceMatchAdvanced[1].trim(), priceMatchAdvanced[2].trim(), false);
       } else if (priceMatchSimple) {
-        // 智能无空格匹配逻辑
         let queryAppName = priceMatchSimple[1].trim();
         let targetRegion = '美国';
         let isDefaultSearch = true;
@@ -99,7 +96,6 @@ async function handlePostRequest(req, res) {
       } else if (osAllMatch) {
         replyContent = await handleSimpleAllOsUpdates();
       } else if (osUpdateMatch) {
-        // 【修改 2】直接获取捕获到的系统名 (例如 "ios")
         const platform = osUpdateMatch[1].trim();
         replyContent = await handleDetailedOsUpdate(platform);
       } else if (switchRegionMatch && isSupportedRegion(switchRegionMatch[2])) {
@@ -183,7 +179,7 @@ async function getJSON(url, { timeout = 6000, retries = 1 } = {}) {
   throw lastErr;
 }
 
-// 榜单查询 (旧版接口)
+// 【关键修复】榜单查询：必须对每个 App 名字应用 smartWrap
 async function handleChartQuery(regionName, chartType) {
   const regionCode = getCountryCode(regionName);
   if (!regionCode) return '不支持的地区或格式错误。';
@@ -197,13 +193,15 @@ async function handleChartQuery(regionName, chartType) {
     
     if (!apps.length) return '获取榜单失败，可能 Apple 接口暂时繁忙。';
 
-    // 【修改】应用分割线
     let resultText = `${regionName}${chartType}\n${SEPARATOR}\n${getFormattedTime()}\n\n`;
 
     resultText += apps.map((app, idx) => {
       const appId = app.id && app.id.attributes ? app.id.attributes['im:id'] : '';
-      const appName = (app['im:name'] && app['im:name'].label) || '未知应用';
+      let appName = (app['im:name'] && app['im:name'].label) || '未知应用';
       
+      // ⚠️⚠️⚠️ 这里是关键！榜单里的名字也要强制切断 ⚠️⚠️⚠️
+      appName = smartWrap(appName, WRAP_LIMIT);
+
       let appUrl = '';
       if (Array.isArray(app.link) && app.link.length > 0) {
           appUrl = app.link[0].attributes.href;
@@ -216,10 +214,9 @@ async function handleChartQuery(regionName, chartType) {
     }).join('\n');
 
     const toggleCmd = chartType === '免费榜' ? `${regionName}付费榜` : `${regionName}免费榜`;
-    resultText += `\n› <a href="weixin://bizmsgmenu?msgmenucontent=${encodeURIComponent(toggleCmd)}&msgmenuid=${encodeURIComponent(toggleCmd)}">查看${chartType === '免费榜' ? '付费' : '免费'}榜单</a>`;
     
-    // 【修改】应用分割线
-    resultText += `\n${SEPARATOR}\n${SOURCE_NOTE}`;
+    resultText += `\n\n› <a href="weixin://bizmsgmenu?msgmenucontent=${encodeURIComponent(toggleCmd)}&msgmenuid=${encodeURIComponent(toggleCmd)}">查看${chartType === '免费榜' ? '付费' : '免费'}榜单</a>\n`;
+    resultText += `${SEPARATOR}\n${SOURCE_NOTE}`;
     return resultText;
   } catch (e) {
     console.error('Chart Query Error:', e.message || e);
@@ -245,7 +242,6 @@ function formatPrice(r) {
   return '未知';
 }
 
-// 汇率查询 (Frankfurter V3.0)
 async function fetchExchangeRate(targetCurrencyCode) {
   if (!targetCurrencyCode || targetCurrencyCode.toUpperCase() === 'CNY') return null;
   try {
@@ -260,6 +256,7 @@ async function fetchExchangeRate(targetCurrencyCode) {
   return null;
 }
 
+// 【关键修复】价格查询：使用新的 WRAP_LIMIT
 async function handlePriceQuery(appName, regionName, isDefaultSearch) {
   const code = getCountryCode(regionName);
   if (!code) return `不支持的地区或格式错误：${regionName}`;
@@ -272,12 +269,11 @@ async function handlePriceQuery(appName, regionName, isDefaultSearch) {
 
     const best = pickBestMatch(appName, results);
     
-    // 【修改】使用 smartWrap 限制标题宽度
-    const safeTitle = smartWrap(best.trackName);
+    // 强制限制应用名宽度
+    const safeTitle = smartWrap(best.trackName, WRAP_LIMIT);
     const link = `<a href="${best.trackViewUrl}">${safeTitle}</a>`;
     const priceText = formatPrice(best);
 
-    // 【修改】应用分割线
     let replyText = `您搜索的“${appName}”最匹配的结果是：\n${SEPARATOR}\n${link}\n\n地区：${regionName}\n价格：${priceText}`;
 
     if (typeof best.price === 'number' && best.price > 0 && best.currency) {
@@ -289,7 +285,6 @@ async function handlePriceQuery(appName, regionName, isDefaultSearch) {
     }
 
     replyText += `\n\n时间：${getFormattedTime()}\n${SEPARATOR}`;
-    // 【修改 3】去掉建议指令中的空格
     if (isDefaultSearch) replyText += `\n想查其他地区？试试发送：\n价格${appName}日本\n`;
     
     return replyText + `\n${SOURCE_NOTE}`;
@@ -312,10 +307,10 @@ function handleRegionSwitch(regionName) {
   const cnDsf = DSF_MAP[cnCode];
   const cnUrl = `https://itunes.apple.com/WebObjects/MZStore.woa/wa/resetAndRedirect?dsf=${cnDsf}&cc=${cnCode}&url=${encodeURIComponent(redirect)}`;
 
-  // 【修改】应用分割线
   return `注意！仅浏览，需账号才能下载。\n${SEPARATOR}\n\n<a href="${fullUrl}">› 点击切换至【${regionName}】 App Store</a>\n\n› 点此切换至 <a href="${cnUrl}">【大陆】</a> App Store\n\n${SEPARATOR}\n*出现“无法连接”后将自动跳转*\n\n*目前暂不支持 iOS 26 系统*`;
 }
 
+// 【关键修复】上架查询：应用 WRAP_LIMIT
 async function handleAvailabilityQuery(appName) {
   const appInfo = await findAppUniversalId(appName);
   if (!appInfo) {
@@ -323,8 +318,8 @@ async function handleAvailabilityQuery(appName) {
   }
   const availableCountries = await checkAvailability(appInfo.trackId);
   
-  // 【修改】应用分割线和 smartWrap
-  let replyText = `您查询的“${appName}”最匹配的结果是：\n${SEPARATOR}\n${smartWrap(appInfo.trackName)}\n\n`;
+  // 强制切断
+  let replyText = `您查询的“${appName}”最匹配的结果是：\n${SEPARATOR}\n${smartWrap(appInfo.trackName, WRAP_LIMIT)}\n\n`;
   replyText += availableCountries.length
     ? `可下载地区：\n${availableCountries.join(', ')}`
     : `在我们查询的热门地区中，均未发现此应用上架。`;
@@ -364,6 +359,7 @@ async function checkAvailability(trackId) {
   return available;
 }
 
+// 【关键修复】图标查询：应用 WRAP_LIMIT
 async function lookupAppIcon(appName) {
   try {
     const url = `https://itunes.apple.com/search?term=${encodeURIComponent(appName)}&country=us&entity=software&limit=1`;
@@ -372,17 +368,16 @@ async function lookupAppIcon(appName) {
 
     const app = data.results[0];
     const highRes = String(app.artworkUrl100 || '').replace('100x100bb.jpg', '1024x1024bb.jpg');
+    let targetIcon = highRes;
+    
     if (!highRes || highRes === app.artworkUrl100) {
-        const fallbackRes = app.artworkUrl512 || app.artworkUrl100;
-        if (!fallbackRes) return '抱歉，未能获取到该应用的高清图标。';
-
-        // 【修改】应用分割线和 smartWrap
-        const appLink = `<a href="${app.trackViewUrl}">${smartWrap(app.trackName)}</a>`;
-        return `您搜索的“${appName}”最匹配的结果是：\n${SEPARATOR}\n${appLink}\n\n这是它的图标链接：\n${fallbackRes}\n${SEPARATOR}\n${SOURCE_NOTE}`;
+        targetIcon = app.artworkUrl512 || app.artworkUrl100;
+        if (!targetIcon) return '抱歉，未能获取到该应用的高清图标。';
     }
-    // 【修改】应用分割线和 smartWrap
-    const appLink = `<a href="${app.trackViewUrl}">${smartWrap(app.trackName)}</a>`;
-    return `您搜索的“${appName}”最匹配的结果是：\n${SEPARATOR}\n${appLink}\n\n这是它的高清图标链接：\n${highRes}\n${SEPARATOR}\n${SOURCE_NOTE}`;
+
+    const safeTitle = smartWrap(app.trackName, WRAP_LIMIT);
+    const appLink = `<a href="${app.trackViewUrl}">${safeTitle}</a>`;
+    return `您搜索的“${appName}”最匹配的结果是：\n${SEPARATOR}\n${appLink}\n\n这是它的高清图标链接：\n${targetIcon}\n${SEPARATOR}\n${SOURCE_NOTE}`;
   } catch (e) {
     console.error('Error in lookupAppIcon:', e.message || e);
     return '查询应用图标失败，请稍后再试。';
@@ -392,7 +387,6 @@ async function lookupAppIcon(appName) {
 async function fetchGdmf() {
   const url = 'https://gdmf.apple.com/v2/pmv';
   const headers = {
-    // 【修改】只更新了这里的 User-Agent
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'application/json, text/plain, */*'
   };
@@ -439,7 +433,6 @@ function toBeijingYMD(s) {
   return `${y}-${m}-${d2}`;
 }
 
-// 【修改 4】系统更新概览：链接优化 (去掉"更新"和"详情"文字，变成两列蓝色可点击)
 async function handleSimpleAllOsUpdates() {
   try {
     const data = await fetchGdmf();
@@ -454,13 +447,12 @@ async function handleSimpleAllOsUpdates() {
     }
     if (!results.length) return '暂未获取到系统版本信息，请稍后再试。';
 
-    // 【修改】应用分割线
     let replyText = `最新系统版本：\n${SEPARATOR}\n${results.join('\n')}\n\n查看详情：\n`;
     
     replyText += `› <a href="weixin://bizmsgmenu?msgmenucontent=iOS&msgmenuid=iOS">iOS</a>      › <a href="weixin://bizmsgmenu?msgmenucontent=iPadOS&msgmenuid=iPadOS">iPadOS</a>\n`;
     replyText += `› <a href="weixin://bizmsgmenu?msgmenucontent=macOS&msgmenuid=macOS">macOS</a>    › <a href="weixin://bizmsgmenu?msgmenucontent=watchOS&msgmenuid=watchOS">watchOS</a>\n`;
     replyText += `› <a href="weixin://bizmsgmenu?msgmenucontent=tvOS&msgmenuid=tvOS">tvOS</a>      › <a href="weixin://bizmsgmenu?msgmenucontent=visionOS&msgmenuid=visionOS">visionOS</a>\n`;
-    replyText += `\n${SEPARATOR}\n${SOURCE_NOTE}`;
+    replyText += `${SEPARATOR}\n${SOURCE_NOTE}`;
 
     return replyText;
   } catch (e) {
@@ -494,7 +486,6 @@ async function handleDetailedOsUpdate(inputPlatform = 'iOS') {
       return `• ${r.os} ${r.version} (${r.build})${releaseTag}${t?` — ${t}`:''}`;
     });
 
-    // 【修改】应用分割线
     return `${platform} 最新公开版本：\n${SEPARATOR}\n版本：${latest.version}（${latest.build}）${stableTag}\n发布时间：${latestDateStr}\n\n近期版本：\n${lines.join('\n')}\n\n查询时间：${getFormattedTime()}\n${SEPARATOR}\n${SOURCE_NOTE}`;
   } catch (e) {
     console.error('Error in handleDetailedOsUpdate:', e.message || e);
@@ -577,7 +568,7 @@ function determinePlatformsFromDevices(devices) {
     return platforms;
 }
 
-// 【新增 2】智能折行函数
+// 【关键修复】智能折行函数
 function smartWrap(text, maxLimit = 26) {
   if (!text) return '';
   let result = '';
