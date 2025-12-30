@@ -1,6 +1,8 @@
 // api/utils.js
 const axios = require('axios');
 const https = require('https');
+const { ALL_SUPPORTED_REGIONS } = require('./consts');
+
 // Optional: Vercel KV (for anti-abuse gate). If KV isn't available, we will allow requests.
 let kv = null;
 try {
@@ -9,12 +11,10 @@ try {
   kv = null;
 }
 
-const { ALL_SUPPORTED_REGIONS } = require('./consts');
-
 const SOURCE_NOTE = '*数据来源 Apple 官方*';
 
 const HTTP = axios.create({
-  timeout: 4000, 
+  timeout: 4000,
   headers: { 'user-agent': 'Mozilla/5.0 (Serverless-WeChatBot)' }
 });
 
@@ -106,8 +106,8 @@ async function fetchGdmf() {
   try {
     const response = await HTTP.get(url, { timeout: 4000, headers: headers, httpsAgent: agent });
     if (!response.data || typeof response.data !== 'object') {
-        console.error('fetchGdmf Error: Received invalid data format from GDMF.');
-        throw new Error('Received invalid data format from GDMF.');
+      console.error('fetchGdmf Error: Received invalid data format from GDMF.');
+      throw new Error('Received invalid data format from GDMF.');
     }
     return response.data;
   } catch (error) {
@@ -146,32 +146,32 @@ function collectReleases(data, platform) {
     const assetSet = data[setName];
     if (assetSet && typeof assetSet === 'object') {
       for (const sourceKey in assetSet) {
-          const platformArray = assetSet[sourceKey];
-          if (platformArray && Array.isArray(platformArray)) {
-              platformArray.forEach(node => {
-                  if (node && typeof node === 'object') {
-                      const version = node.ProductVersion || node.OSVersion || node.SystemVersion || null;
-                      const build   = node.Build || node.BuildID || node.BuildVersion || null;
-                      const dateStr = node.PostingDate || node.ReleaseDate || node.Date || node.PublishedDate || node.PublicationDate || null;
-                      const devices = node.SupportedDevices;
+        const platformArray = assetSet[sourceKey];
+        if (platformArray && Array.isArray(platformArray)) {
+          platformArray.forEach(node => {
+            if (node && typeof node === 'object') {
+              const version = node.ProductVersion || node.OSVersion || node.SystemVersion || null;
+              const build   = node.Build || node.BuildID || node.BuildVersion || null;
+              const dateStr = node.PostingDate || node.ReleaseDate || node.Date || node.PublishedDate || node.PublicationDate || null;
+              const devices = node.SupportedDevices;
 
-                      if (version && build && !foundBuilds.has(build)) {
-                          const actualPlatforms = determinePlatformsFromDevices(devices);
-                          if (actualPlatforms.has(targetOS)) {
-                              releases.push({ os: targetOS, version, build, date: dateStr, raw: node });
-                              foundBuilds.add(build);
-                          }
-                          else if (targetOS === 'iPadOS' && actualPlatforms.has('iOS')) {
-                              const versionNum = parseFloat(version);
-                              if (!isNaN(versionNum) && versionNum >= 13.0) {
-                                  releases.push({ os: targetOS, version, build, date: dateStr, raw: node });
-                                  foundBuilds.add(build);
-                              }
-                          }
-                      }
+              if (version && build && !foundBuilds.has(build)) {
+                const actualPlatforms = determinePlatformsFromDevices(devices);
+                if (actualPlatforms.has(targetOS)) {
+                  releases.push({ os: targetOS, version, build, date: dateStr, raw: node });
+                  foundBuilds.add(build);
+                }
+                else if (targetOS === 'iPadOS' && actualPlatforms.has('iOS')) {
+                  const versionNum = parseFloat(version);
+                  if (!isNaN(versionNum) && versionNum >= 13.0) {
+                    releases.push({ os: targetOS, version, build, date: dateStr, raw: node });
+                    foundBuilds.add(build);
                   }
-              });
-          }
+                }
+              }
+            }
+          });
+        }
       }
     }
   }
@@ -179,83 +179,72 @@ function collectReleases(data, platform) {
 }
 
 function determinePlatformsFromDevices(devices) {
-    const platforms = new Set();
-    if (!Array.isArray(devices)) return platforms;
-    let hasIOS = false; let hasIPadOS = false; let hasWatchOS = false;
-    let hasTVOS = false; let hasMacOS = false; let hasVisionOS = false;
-    for (const device of devices) {
-        const d = String(device || '').toLowerCase();
-        if (d.startsWith('iphone') || d.startsWith('ipod')) hasIOS = true;
-        else if (d.startsWith('ipad')) hasIPadOS = true;
-        else if (d.startsWith('watch')) hasWatchOS = true;
-        else if (d.startsWith('appletv') || d.startsWith('audioaccessory')) hasTVOS = true;
-        else if (d.startsWith('j') || d.startsWith('mac-') || d.includes('macos') || d.startsWith('vmm') || d.startsWith('x86') || /^[A-Z]\d{3}[A-Z]{2}AP$/i.test(device)) hasMacOS = true;
-        else if (d.startsWith('realitydevice')) hasVisionOS = true;
-    }
-    if (hasIOS) platforms.add('iOS');
-    if (hasIPadOS) platforms.add('iPadOS');
-    if (hasWatchOS) platforms.add('watchOS');
-    if (hasTVOS) platforms.add('tvOS');
-    if (hasMacOS) platforms.add('macOS');
-    if (hasVisionOS) platforms.add('visionOS');
-    return platforms;
+  const platforms = new Set();
+  if (!Array.isArray(devices)) return platforms;
+  let hasIOS = false; let hasIPadOS = false; let hasWatchOS = false;
+  let hasTVOS = false; let hasMacOS = false; let hasVisionOS = false;
+  for (const device of devices) {
+    const d = String(device || '').toLowerCase();
+    if (d.startsWith('iphone') || d.startsWith('ipod')) hasIOS = true;
+    else if (d.startsWith('ipad')) hasIPadOS = true;
+    else if (d.startsWith('watch')) hasWatchOS = true;
+    else if (d.startsWith('appletv') || d.startsWith('audioaccessory')) hasTVOS = true;
+    else if (d.startsWith('j') || d.startsWith('mac-') || d.includes('macos') || d.startsWith('vmm') || d.startsWith('x86') || /^[A-Z]\d{3}[A-Z]{2}AP$/i.test(device)) hasMacOS = true;
+    else if (d.startsWith('realitydevice')) hasVisionOS = true;
+  }
+  if (hasIOS) platforms.add('iOS');
+  if (hasIPadOS) platforms.add('iPadOS');
+  if (hasWatchOS) platforms.add('watchOS');
+  if (hasTVOS) platforms.add('tvOS');
+  if (hasMacOS) platforms.add('macOS');
+  if (hasVisionOS) platforms.add('visionOS');
+  return platforms;
 }
+
 // ------------------------------
 // Anti-abuse "master gate"
-// - Per minute: RATE_LIMIT_PER_MINUTE (default 10)
-// - Per day:    DAILY_LIMIT_GLOBAL   (default 30)
-// Only works reliably with KV. If KV is missing/unavailable, it defaults to allow.
+// - RATE_LIMIT_PER_MINUTE (default 10): per openid, per minute
+// - DAILY_LIMIT_GLOBAL   (default 30): per openid, per day
+// Only counts when caller decides the message is a valid command.
+// If KV is missing/unavailable, it defaults to allow.
 // ------------------------------
+function getBJDate() {
+  const now = new Date();
+  return new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
+}
 
-function getLocalParts() {
-  // Asia/Singapore = UTC+8, same as Beijing time for date bucketing
-  try {
-    const parts = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Singapore',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false
-    }).formatToParts(new Date());
-    const get = (t) => parts.find(p => p.type === t)?.value || '';
-    return {
-      y: get('year'),
-      m: get('month'),
-      d: get('day'),
-      hh: get('hour'),
-      mm: get('minute')
-    };
-  } catch (_) {
-    const now = new Date();
-    const pad = (n) => String(n).padStart(2, '0');
-    return {
-      y: String(now.getUTCFullYear()),
-      m: pad(now.getUTCMonth() + 1),
-      d: pad(now.getUTCDate()),
-      hh: pad(now.getUTCHours()),
-      mm: pad(now.getUTCMinutes())
-    };
-  }
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
+function getBuckets() {
+  const bj = getBJDate();
+  const y = String(bj.getFullYear());
+  const m = pad2(bj.getMonth() + 1);
+  const d = pad2(bj.getDate());
+  const hh = pad2(bj.getHours());
+  const mm = pad2(bj.getMinutes());
+  return {
+    day: `${y}${m}${d}`,
+    minute: `${y}${m}${d}${hh}${mm}`
+  };
 }
 
 async function checkAbuseGate(openId) {
-  const perMinute = Number(process.env.RATE_LIMIT_PER_MINUTE || 10); // 60秒内最多 N 次
-  const perDay = Number(process.env.DAILY_LIMIT_GLOBAL || 30);       // 每天最多 N 次
+  const perMinute = Number(process.env.RATE_LIMIT_PER_MINUTE || 10);
+  const perDay = Number(process.env.DAILY_LIMIT_GLOBAL || 30);
 
   if (!openId) return { allowed: true };
-  if (!kv) return { allowed: true }; // no KV => don't block
+  if (!kv) return { allowed: true }; // KV not configured -> don't block
 
   try {
-    // 1) short-term rate limit (per minute)
+    const { day, minute } = getBuckets();
+
+    // 1) per minute gate
     if (perMinute > 0) {
-      const { y, m, d, hh, mm } = getLocalParts();
-      const minuteKey = `${y}${m}${d}${hh}${mm}`;
-      const key = `gate:rl:${minuteKey}:${openId}`;
+      const key = `gate:rl:${minute}:${openId}`;
       const used = await kv.incr(key);
       if (used === 1) {
-        // expire slightly longer than a minute
         await kv.expire(key, 80);
       }
       if (used > perMinute) {
@@ -263,14 +252,11 @@ async function checkAbuseGate(openId) {
       }
     }
 
-    // 2) daily limit (per day)
+    // 2) per day gate
     if (perDay > 0) {
-      const { y, m, d } = getLocalParts();
-      const dayKey = `${y}-${m}-${d}`;
-      const key = `gate:daily:${dayKey}:${openId}`;
+      const key = `gate:daily:${day}:${openId}`;
       const used = await kv.incr(key);
       if (used === 1) {
-        // expire ~26h
         await kv.expire(key, 60 * 60 * 26);
       }
       if (used > perDay) {
@@ -280,7 +266,7 @@ async function checkAbuseGate(openId) {
 
     return { allowed: true };
   } catch (e) {
-    // KV error => allow (avoid breaking service)
+    // KV error -> allow (avoid service outage)
     return { allowed: true };
   }
 }
@@ -300,5 +286,7 @@ module.exports = {
   toBeijingYMD,
   collectReleases,
   determinePlatformsFromDevices,
+
+  // new
   checkAbuseGate
 };
