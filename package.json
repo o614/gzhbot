@@ -1,10 +1,6 @@
 {
-  "name": "apple-wechat-bot",
-  "version": "1.0.0",
-  "main": "api/wechat.js",
   "dependencies": {
     "axios": "^1.7.2",
-    "xml2js": "^0.6.2",
-    "@vercel/kv": "^1.0.1"
+    "xml2js": "^0.6.2"
   }
 }
