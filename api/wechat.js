@@ -1,45 +1,62 @@
 const { parseStringPromise } = require('xml2js');
 const handlers = require('./handlers');
 
+// 👇 新增：专门用来强行读取 XML 原始数据的函数
+function getRawBody(req) {
+  return new Promise((resolve, reject) => {
+    // 1. 如果 Vercel 已经解析了（比如是 Buffer），直接转字符串
+    if (req.body) {
+      if (typeof req.body === 'string') return resolve(req.body);
+      if (Buffer.isBuffer(req.body)) return resolve(req.body.toString());
+      // 奇怪的情况，可能是 JSON 对象，转回字符串
+      return resolve(JSON.stringify(req.body));
+    }
+
+    // 2. 如果 body 是空的，说明需要手动读取流
+    let data = '';
+    req.on('data', chunk => {
+      data += chunk;
+    });
+    req.on('end', () => {
+      resolve(data);
+    });
+    req.on('error', err => {
+      reject(err);
+    });
+  });
+}
+
 module.exports = async (req, res) => {
   try {
-    const { body } = req;
-
-    // 🔍 调试日志：看看请求到底是啥样
-    console.log(`[Request] Method: ${req.method}, Body Type: ${typeof body}`);
-    
-    // 1. 如果是 GET 请求 (微信验证)，直接放行
+    // 1. 微信验证 (GET)
     if (req.method === 'GET') {
       return res.status(200).send(req.query.echostr);
     }
 
-    // 🛡️ 防弹逻辑：如果 Body 是空的，直接返回 success 闭嘴，防止报错崩溃
-    if (!body) {
-      console.warn('[Warning] 收到空 Body 的 POST 请求，已忽略。');
+    // 2. 👇 关键修改：手动读取 XML 内容
+    const rawContent = await getRawBody(req);
+    
+    // 🔍 打印日志：让我看看这次能不能拿到数据
+    console.log(`[Request] Raw Body Length: ${rawContent ? rawContent.length : 0}`);
+    
+    if (!rawContent) {
+      console.warn('[Warning] 确实读不到数据，跳过。');
       return res.status(200).send('success');
     }
 
-    // 2. 解析 XML (加了 try-catch 防止解析失败炸掉)
-    let xml;
-    try {
-      const result = await parseStringPromise(body);
-      xml = result.xml;
-    } catch (parseError) {
-      console.error('[Error] XML 解析失败:', parseError);
-      return res.status(200).send('success'); // 解析不了也回 success，防止微信重试
-    }
+    // 3. 解析 XML
+    const result = await parseStringPromise(rawContent);
+    const xml = result.xml;
 
-    // 3. 提取信息
-    const toUser = xml.ToUserName ? xml.ToUserName[0] : '';
-    const fromUser = xml.FromUserName ? xml.FromUserName[0] : '';
+    const toUser = xml.ToUserName[0];
+    const fromUser = xml.FromUserName[0]; // 用户 OpenID
     const content = xml.Content ? xml.Content[0].trim() : '';
 
-    console.log(`[Message] From: ${fromUser}, Content: "${content}"`);
+    console.log(`[Message] User: ${fromUser}, Content: ${content}`);
 
-    // 4. 定义回复函数
+    // 4. 定义回复
     const reply = (text) => {
       const now = Math.floor(Date.now() / 1000);
-      // 这里的 fromUser 和 toUser 互换位置发送
       const xmlResponse = `
         <xml>
           <ToUserName><![CDATA[${fromUser}]]></ToUserName>
@@ -53,12 +70,7 @@ module.exports = async (req, res) => {
       res.status(200).send(xmlResponse);
     };
 
-    // 5. 业务逻辑 (记得把 ID 传下去！)
-    if (!fromUser) {
-      console.warn('[Warning] 居然没有 OpenID？');
-      return reply('无法识别用户身份');
-    }
-
+    // 5. 业务逻辑 (把 fromUser 传下去!)
     if (content === '更新' || content.toLowerCase() === 'update') {
       const result = await handlers.handleSimpleAllOsUpdates();
       return reply(result);
@@ -70,7 +82,7 @@ module.exports = async (req, res) => {
     } 
     else if (content.startsWith('图标')) {
       const appName = content.replace('图标', '').trim();
-      // 👇 关键：带着 ID 去查
+      // 👇 带着 ID 去查
       const result = await handlers.lookupAppIcon(appName, fromUser);
       return reply(result);
     }
@@ -79,8 +91,7 @@ module.exports = async (req, res) => {
     }
 
   } catch (error) {
-    console.error('[Fatal Error] 主程序崩溃:', error);
-    // 无论如何都要返回 200，否则微信会以为没发送成功一直重试
+    console.error('[Error] 处理失败:', error);
     res.status(200).send('success');
   }
 };
