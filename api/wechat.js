@@ -2,7 +2,7 @@
 const crypto = require('crypto');
 const { Parser, Builder } = require('xml2js');
 const { ALL_SUPPORTED_REGIONS } = require('./consts');
-const { isSupportedRegion } = require('./utils');
+const { isSupportedRegion, checkAbuseGate } = require('./utils');
 const Handlers = require('./handlers');
 
 const WECHAT_TOKEN = process.env.WECHAT_TOKEN;
@@ -57,41 +57,97 @@ async function handlePostRequest(req, res) {
       const iconMatch = content.match(/^图标\s*(.+)$/i); 
 
       // 路由转发 (Routing)
-      if (chartV2Match && isSupportedRegion(chartV2Match[1])) {
-        replyContent = await Handlers.handleChartQuery(chartV2Match[1].trim(), '免费榜');
-      } else if (chartMatch && isSupportedRegion(chartMatch[1])) {
-        replyContent = await Handlers.handleChartQuery(chartMatch[1].trim(), chartMatch[2]);
-      } else if (priceMatchAdvanced && isSupportedRegion(priceMatchAdvanced[2])) {
-        replyContent = await Handlers.handlePriceQuery(priceMatchAdvanced[1].trim(), priceMatchAdvanced[2].trim(), false);
-      } else if (priceMatchSimple) {
-        let queryAppName = priceMatchSimple[1].trim();
-        let targetRegion = '美国';
-        let isDefaultSearch = true;
-        for (const countryName in ALL_SUPPORTED_REGIONS) {
-          if (queryAppName.endsWith(countryName) && queryAppName.length > countryName.length) {
-            targetRegion = countryName;
-            queryAppName = queryAppName.slice(0, -countryName.length).trim();
-            isDefaultSearch = false; 
-            break; 
-          }
-        }
-        replyContent = await Handlers.handlePriceQuery(queryAppName, targetRegion, isDefaultSearch);
+      // 1) 榜单 v2
+if (chartV2Match && isSupportedRegion(chartV2Match[1])) {
+  const gate = await checkAbuseGate(message.FromUserName);
+  if (!gate.allowed) {
+    replyContent = gate.message;
+  } else {
+    replyContent = await Handlers.handleChartQuery(chartV2Match[1].trim(), '免费榜');
+  }
 
-      } else if (osAllMatch) {
-        replyContent = await Handlers.handleSimpleAllOsUpdates();
-      } else if (osUpdateMatch) {
-        const platform = osUpdateMatch[1].trim();
-        replyContent = await Handlers.handleDetailedOsUpdate(platform);
-      } else if (switchRegionMatch && isSupportedRegion(switchRegionMatch[2])) {
-        replyContent = Handlers.handleRegionSwitch(switchRegionMatch[2].trim());
-      } else if (availabilityMatch) {
-        replyContent = await Handlers.handleAvailabilityQuery(availabilityMatch[1].trim());
-      } else if (iconMatch) { 
-        const appName = iconMatch[1].trim();
-        if (appName) replyContent = await Handlers.lookupAppIcon(appName);
+// 2) 榜单 free/paid
+} else if (chartMatch && isSupportedRegion(chartMatch[1])) {
+  const gate = await checkAbuseGate(message.FromUserName);
+  if (!gate.allowed) {
+    replyContent = gate.message;
+  } else {
+    replyContent = await Handlers.handleChartQuery(chartMatch[1].trim(), chartMatch[2]);
+  }
+
+// 3) 价格（带地区）
+} else if (priceMatchAdvanced && isSupportedRegion(priceMatchAdvanced[2])) {
+  const gate = await checkAbuseGate(message.FromUserName);
+  if (!gate.allowed) {
+    replyContent = gate.message;
+  } else {
+    replyContent = await Handlers.handlePriceQuery(priceMatchAdvanced[1].trim(), priceMatchAdvanced[2].trim(), false);
+  }
+
+// 4) 价格（默认/末尾地区剥离）
+} else if (priceMatchSimple) {
+  const gate = await checkAbuseGate(message.FromUserName);
+  if (!gate.allowed) {
+    replyContent = gate.message;
+  } else {
+    let queryAppName = priceMatchSimple[1].trim();
+    let targetRegion = '美国';
+    let isDefaultSearch = true;
+    for (const countryName in ALL_SUPPORTED_REGIONS) {
+      if (queryAppName.endsWith(countryName) && queryAppName.length > countryName.length) {
+        targetRegion = countryName;
+        queryAppName = queryAppName.slice(0, -countryName.length).trim();
+        isDefaultSearch = false;
+        break;
       }
     }
-  } catch (error) {
+    replyContent = await Handlers.handlePriceQuery(queryAppName, targetRegion, isDefaultSearch);
+  }
+
+// 5) 系统更新总览
+} else if (osAllMatch) {
+  const gate = await checkAbuseGate(message.FromUserName);
+  if (!gate.allowed) {
+    replyContent = gate.message;
+  } else {
+    replyContent = await Handlers.handleSimpleAllOsUpdates();
+  }
+
+// 6) 单平台更新
+} else if (osUpdateMatch) {
+  const gate = await checkAbuseGate(message.FromUserName);
+  if (!gate.allowed) {
+    replyContent = gate.message;
+  } else {
+    const platform = osUpdateMatch[1].trim();
+    replyContent = await Handlers.handleDetailedOsUpdate(platform);
+  }
+
+// 7) 切换地区（不加闸，保持旧体验）
+} else if (switchRegionMatch && isSupportedRegion(switchRegionMatch[2])) {
+  replyContent = Handlers.handleRegionSwitch(switchRegionMatch[2].trim());
+
+// 8) 上架地区查询
+} else if (availabilityMatch) {
+  const gate = await checkAbuseGate(message.FromUserName);
+  if (!gate.allowed) {
+    replyContent = gate.message;
+  } else {
+    replyContent = await Handlers.handleAvailabilityQuery(availabilityMatch[1].trim());
+  }
+
+// 9) 图标
+} else if (iconMatch) {
+  const appName = iconMatch[1].trim();
+  if (appName) {
+    const gate = await checkAbuseGate(message.FromUserName);
+    if (!gate.allowed) {
+      replyContent = gate.message;
+    } else {
+      replyContent = await Handlers.lookupAppIcon(appName);
+    }
+  }
+}catch (error) {
     console.error('Error processing POST:', error.message || error);
   }
 
@@ -121,3 +177,4 @@ function buildTextReply(toUser, fromUser, content) {
   };
   return builder.buildObject(payload);
 }
+
