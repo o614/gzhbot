@@ -1,19 +1,13 @@
+// api/handlers.js
 const { 
-  getCountryCode, getJSON, getFormattedTime, 
+  getCountryCode, getJSON, getFormattedTime, SOURCE_NOTE, 
   pickBestMatch, formatPrice, fetchExchangeRate, 
   fetchGdmf, collectReleases, normalizePlatform, toBeijingYMD 
 } = require('./utils');
 
-// ⚠️ 注意：如果你之前的 constants.js 改名成了 consts.js，这里保持不变。
-// 如果文件名是 constants.js，请把下面这行改成 require('./constants')
 const { DSF_MAP, BLOCKED_APP_IDS, TARGET_COUNTRIES_FOR_AVAILABILITY } = require('./consts');
 
-// 这里定义一个 SOURCE_NOTE，以防 utils 里没有导出它导致报错
-const SOURCE_NOTE = 'Powered by 果粉秘密基地'; 
-
-// ==========================================
 // 1. 榜单查询
-// ==========================================
 async function handleChartQuery(regionName, chartType) {
   const regionCode = getCountryCode(regionName);
   if (!regionCode) return '不支持的地区或格式错误。';
@@ -40,7 +34,7 @@ async function handleChartQuery(regionName, chartType) {
           appUrl = app.link.attributes.href;
       }
 
-      if (BLOCKED_APP_IDS && BLOCKED_APP_IDS.has && BLOCKED_APP_IDS.has(appId)) return `${idx + 1}、${appName}`;
+      if (BLOCKED_APP_IDS.has(appId)) return `${idx + 1}、${appName}`;
       return appUrl ? `${idx + 1}、<a href="${appUrl}">${appName}</a>` : `${idx + 1}、${appName}`;
     }).join('\n');
 
@@ -54,9 +48,7 @@ async function handleChartQuery(regionName, chartType) {
   }
 }
 
-// ==========================================
-// 2. 价格查询 (恢复小票/详细样式)
-// ==========================================
+// 2. 价格查询
 async function handlePriceQuery(appName, regionName, isDefaultSearch) {
   const code = getCountryCode(regionName);
   if (!code) return `不支持的地区或格式错误：${regionName}`;
@@ -91,9 +83,7 @@ async function handlePriceQuery(appName, regionName, isDefaultSearch) {
   }
 }
 
-// ==========================================
-// 3. 商店切换 (纯文字回复)
-// ==========================================
+// 3. 商店切换
 function handleRegionSwitch(regionName) {
   const regionCode = getCountryCode(regionName);
   const dsf = DSF_MAP[regionCode];
@@ -110,9 +100,7 @@ function handleRegionSwitch(regionName) {
   return `注意！仅浏览，需账号才能下载。\n\n<a href="${fullUrl}">› 点击切换至【${regionName}】 App Store</a>\n\n› 点此切换至 <a href="${cnUrl}">【大陆】</a> App Store\n\n*出现“无法连接”后将自动跳转*\n\n*目前不支持 iOS 26 及以上系统*`;
 }
 
-// ==========================================
-// 4. 上架查询 (可用性)
-// ==========================================
+// 4. 上架查询
 async function handleAvailabilityQuery(appName) {
   const appInfo = await findAppUniversalId(appName);
   if (!appInfo) {
@@ -159,10 +147,8 @@ async function checkAvailability(trackId) {
   return available;
 }
 
-// ==========================================
-// 5. 图标查询 (高清图)
-// ==========================================
-async function lookupAppIcon(appName, openId) { // 这里保留 openId 参数占位，虽然这里不用，但 controller 会传
+// 5. 图标查询
+async function lookupAppIcon(appName) {
   try {
     const url = `https://itunes.apple.com/search?term=${encodeURIComponent(appName)}&country=us&entity=software&limit=1`;
     const data = await getJSON(url, { timeout: 8000 });
@@ -170,27 +156,22 @@ async function lookupAppIcon(appName, openId) { // 这里保留 openId 参数占
 
     const app = data.results[0];
     const highRes = String(app.artworkUrl100 || '').replace('100x100bb.jpg', '1024x1024bb.jpg');
-    
-    // 逻辑：如果替换失败，退回 512
-    let finalIcon = highRes;
-    let desc = '高清图标链接';
-
     if (!highRes || highRes === app.artworkUrl100) {
-        finalIcon = app.artworkUrl512 || app.artworkUrl100;
-        desc = '图标链接';
-    }
+        const fallbackRes = app.artworkUrl512 || app.artworkUrl100;
+        if (!fallbackRes) return '抱歉，未能获取到该应用的高清图标。';
 
+        const appLink = `<a href="${app.trackViewUrl}">${app.trackName}</a>`;
+        return `您搜索的“${appName}”最匹配的结果是：\n\n${appLink}\n\n这是它的图标链接：\n${fallbackRes}\n\n${SOURCE_NOTE}`;
+    }
     const appLink = `<a href="${app.trackViewUrl}">${app.trackName}</a>`;
-    return `您搜索的“${appName}”最匹配的结果是：\n\n${appLink}\n\n这是它的${desc}：\n${finalIcon}\n\n${SOURCE_NOTE}`;
+    return `您搜索的“${appName}”最匹配的结果是：\n\n${appLink}\n\n这是它的高清图标链接：\n${highRes}\n\n${SOURCE_NOTE}`;
   } catch (e) {
     console.error('Error in lookupAppIcon:', e.message || e);
     return '查询应用图标失败，请稍后再试。';
   }
 }
 
-// ==========================================
-// 6. 系统更新 (简约版)
-// ==========================================
+// 6. 系统更新
 async function handleSimpleAllOsUpdates() {
   try {
     const data = await fetchGdmf();
@@ -219,7 +200,6 @@ async function handleSimpleAllOsUpdates() {
   }
 }
 
-// 7. 系统更新 (详细版 - 用户点击上面的菜单触发)
 async function handleDetailedOsUpdate(inputPlatform = 'iOS') {
   const platform = normalizePlatform(inputPlatform) || 'iOS';
   try {
@@ -252,7 +232,6 @@ async function handleDetailedOsUpdate(inputPlatform = 'iOS') {
   }
 }
 
-// 导出所有函数
 module.exports = {
   handleChartQuery,
   handlePriceQuery,
