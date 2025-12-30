@@ -6,8 +6,7 @@ const utils = require('./utils');
 // 🎛️ 配置表
 // ==========================================
 const LIMIT_CONFIG = {
-  // 👑 【必须修改】你的 OpenID
-  // 只有这个 ID 发送 "vip add xxx" 才有用
+  // 👑 你的 OpenID (超级管理员)
   ADMIN_OPENID: 'o4UNGw6r9OL9q_4jRAfed_jnvXh8', 
 
   // 全局限制
@@ -25,7 +24,6 @@ const LIMIT_CONFIG = {
   }
 };
 
-// 强行读取 Body
 function getRawBody(req) {
   return new Promise((resolve, reject) => {
     if (req.body) {
@@ -42,14 +40,10 @@ function getRawBody(req) {
 
 module.exports = async (req, res) => {
   try {
-    // 1. 微信握手
     if (req.method === 'GET') return res.status(200).send(req.query.echostr);
-
-    // 2. 读取数据
     const rawContent = await getRawBody(req);
     if (!rawContent) return res.status(200).send('success');
 
-    // 3. 解析 XML
     const result = await parseStringPromise(rawContent);
     const xml = result.xml;
     const toUser = xml.ToUserName[0];
@@ -60,7 +54,6 @@ module.exports = async (req, res) => {
 
     console.log(`[Msg] User: ${fromUser}, Content: ${content}`);
 
-    // 回复工具
     const reply = (text) => {
       const now = Math.floor(Date.now() / 1000);
       res.setHeader('Content-Type', 'application/xml');
@@ -77,17 +70,23 @@ module.exports = async (req, res) => {
 
     // 🚦 拦截检查器
     const checkLimits = async (actionType) => {
-      const featureLimit = LIMIT_CONFIG.FEATURES[actionType];
-      if (featureLimit === -1) return true; // 豁免
+      // 👇👇👇【核心修改】超级管理员直接无敌，跳过所有检查 👇👇👇
+      if (fromUser === LIMIT_CONFIG.ADMIN_OPENID) {
+        console.log(`[Admin] 管理员 ${fromUser} 驾到，统统闪开！`);
+        return true; 
+      }
 
-      // 先查大闸
+      const featureLimit = LIMIT_CONFIG.FEATURES[actionType];
+      if (featureLimit === -1) return true; // 豁免功能
+
+      // 查大闸
       const globalAllowed = await utils.checkUsageLimit(fromUser, 'global_limit', LIMIT_CONFIG.GLOBAL_DAILY_LIMIT);
       if (!globalAllowed) {
         reply(`🚫 今日总互动已达上限 (${LIMIT_CONFIG.GLOBAL_DAILY_LIMIT}次)。\n成为VIP会员可解除限制。`);
         return false;
       }
 
-      // 再查小闸
+      // 查小闸
       if (featureLimit > 0) {
         const featureAllowed = await utils.checkUsageLimit(fromUser, `feat_${actionType}`, featureLimit);
         if (!featureAllowed) {
@@ -105,7 +104,7 @@ module.exports = async (req, res) => {
     // 👮‍♂️ 管理员指令 (VIP 管理)
     if (fromUser === LIMIT_CONFIG.ADMIN_OPENID && content.toLowerCase().startsWith('vip')) {
       const parts = content.split(' ');
-      if (parts.length === 3) { // vip add openid
+      if (parts.length === 3) { 
         const cmd = parts[1];
         const targetId = parts[2];
         const result = await utils.manageVip(cmd, targetId);
@@ -115,11 +114,20 @@ module.exports = async (req, res) => {
 
     // 1. 关注事件
     if (msgType === 'event' && eventType === 'subscribe') {
-      return reply('欢迎关注！\n请点击底部菜单体验功能。\n发送 myid 可查看你的用户ID。');
+      const welcomeText = 
+        `恭喜！你发现了果粉秘密基地\n\n` +
+        `› <a href="weixin://bizmsgmenu?msgmenucontent=付款方式&msgmenuid=付款方式">付款方式</a>\n获取注册地址信息\n\n` +
+        `› <a href="weixin://bizmsgmenu?msgmenucontent=查询TikTok&msgmenuid=1">查询TikTok</a>\n热门地区上架查询\n\n` +
+        `› <a href="weixin://bizmsgmenu?msgmenucontent=榜单美国&msgmenuid=3">榜单美国</a>\n全球免费付费榜单\n\n` +
+        `› <a href="weixin://bizmsgmenu?msgmenucontent=价格YouTube&msgmenuid=2">价格YouTube</a>\n应用价格优惠查询\n\n` +
+        `› <a href="weixin://bizmsgmenu?msgmenucontent=切换美国&msgmenuid=4">切换美国</a>\n应用商店随意切换\n\n` +
+        `› <a href="weixin://bizmsgmenu?msgmenucontent=图标QQ&msgmenuid=5">图标QQ</a>\n获取官方高清图标\n\n更多服务请戳底部菜单栏了解`;
+      return reply(welcomeText);
     }
 
     // 2. MyID
     if (content.toLowerCase() === 'myid') {
+      // 这里的 checkLimits('myid') 现在对你会直接返回 true
       if (await checkLimits('myid')) return reply(`你的 OpenID 是：\n${fromUser}`);
     }
 
@@ -152,7 +160,7 @@ module.exports = async (req, res) => {
     // 6. 切换 (豁免)
     else if (content.startsWith('切换')) {
       if (await checkLimits('switch')) {
-        return reply('🇺🇸 切换教程链接：\nhttps://itunes.apple.com/...');
+        return reply('🇺🇸 切换教程链接：\n(这里填链接)');
       }
     }
 
@@ -163,7 +171,14 @@ module.exports = async (req, res) => {
       }
     }
 
-    // 8. 兜底
+    // 8. 榜单
+    else if (content.startsWith('榜单')) {
+      if (await checkLimits('rank')) {
+         return reply('🏆 榜单功能 (请对接handlers)...');
+      }
+    }
+
+    // 9. 兜底
     else {
       return res.status(200).send('success');
     }
