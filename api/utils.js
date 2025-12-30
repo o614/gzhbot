@@ -1,6 +1,14 @@
 // api/utils.js
 const axios = require('axios');
 const https = require('https');
+// Optional: Vercel KV (for anti-abuse gate). If KV isn't available, we will allow requests.
+let kv = null;
+try {
+  ({ kv } = require('@vercel/kv'));
+} catch (e) {
+  kv = null;
+}
+
 const { ALL_SUPPORTED_REGIONS } = require('./consts');
 
 const SOURCE_NOTE = '*数据来源 Apple 官方*';
@@ -192,6 +200,90 @@ function determinePlatformsFromDevices(devices) {
     if (hasVisionOS) platforms.add('visionOS');
     return platforms;
 }
+// ------------------------------
+// Anti-abuse "master gate"
+// - Per minute: RATE_LIMIT_PER_MINUTE (default 10)
+// - Per day:    DAILY_LIMIT_GLOBAL   (default 30)
+// Only works reliably with KV. If KV is missing/unavailable, it defaults to allow.
+// ------------------------------
+
+function getLocalParts() {
+  // Asia/Singapore = UTC+8, same as Beijing time for date bucketing
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Singapore',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    }).formatToParts(new Date());
+    const get = (t) => parts.find(p => p.type === t)?.value || '';
+    return {
+      y: get('year'),
+      m: get('month'),
+      d: get('day'),
+      hh: get('hour'),
+      mm: get('minute')
+    };
+  } catch (_) {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    return {
+      y: String(now.getUTCFullYear()),
+      m: pad(now.getUTCMonth() + 1),
+      d: pad(now.getUTCDate()),
+      hh: pad(now.getUTCHours()),
+      mm: pad(now.getUTCMinutes())
+    };
+  }
+}
+
+async function checkAbuseGate(openId) {
+  const perMinute = Number(process.env.RATE_LIMIT_PER_MINUTE || 10); // 60秒内最多 N 次
+  const perDay = Number(process.env.DAILY_LIMIT_GLOBAL || 30);       // 每天最多 N 次
+
+  if (!openId) return { allowed: true };
+  if (!kv) return { allowed: true }; // no KV => don't block
+
+  try {
+    // 1) short-term rate limit (per minute)
+    if (perMinute > 0) {
+      const { y, m, d, hh, mm } = getLocalParts();
+      const minuteKey = `${y}${m}${d}${hh}${mm}`;
+      const key = `gate:rl:${minuteKey}:${openId}`;
+      const used = await kv.incr(key);
+      if (used === 1) {
+        // expire slightly longer than a minute
+        await kv.expire(key, 80);
+      }
+      if (used > perMinute) {
+        return { allowed: false, message: '操作太频繁，请稍后再试。' };
+      }
+    }
+
+    // 2) daily limit (per day)
+    if (perDay > 0) {
+      const { y, m, d } = getLocalParts();
+      const dayKey = `${y}-${m}-${d}`;
+      const key = `gate:daily:${dayKey}:${openId}`;
+      const used = await kv.incr(key);
+      if (used === 1) {
+        // expire ~26h
+        await kv.expire(key, 60 * 60 * 26);
+      }
+      if (used > perDay) {
+        return { allowed: false, message: '今日查询次数已达上限，请明天再试。' };
+      }
+    }
+
+    return { allowed: true };
+  } catch (e) {
+    // KV error => allow (avoid breaking service)
+    return { allowed: true };
+  }
+}
 
 module.exports = {
   HTTP,
@@ -207,5 +299,6 @@ module.exports = {
   normalizePlatform,
   toBeijingYMD,
   collectReleases,
-  determinePlatformsFromDevices
+  determinePlatformsFromDevices,
+  checkAbuseGate
 };
