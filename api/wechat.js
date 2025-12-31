@@ -1,13 +1,14 @@
 // api/wechat.js
+// 修复了正则匹配逻辑，确保“地区+付费榜”不再静默失败
 const crypto = require('crypto');
 const { Parser, Builder } = require('xml2js');
 const { ALL_SUPPORTED_REGIONS } = require('./consts');
-const { isVIP, setVIP } = require('./utils');
+const { isSupportedRegion, checkAbuseGate, checkSubscribeFirstTime } = require('./utils');
 const Handlers = require('./handlers');
 
 const WECHAT_TOKEN = process.env.WECHAT_TOKEN;
 
-// Admin OpenIDs: comma-separated, e.g. "oAbc...,oXyz..."
+// Admin OpenIDs
 const ADMIN_OPENIDS = String(process.env.ADMIN_OPENIDS || '')
   .split(',')
   .map(s => s.trim())
@@ -54,7 +55,6 @@ function buildWelcomeText(prefixLine = '') {
   return prefixLine ? `${prefixLine}\n\n${base}` : base;
 }
 
-// 修复：榜单查询（特别是付费榜查询）时，点击菜单能返回正确地区的榜单
 async function handlePostRequest(req, res) {
   let replyContent = '';
   let message = {};
@@ -65,30 +65,112 @@ async function handlePostRequest(req, res) {
 
     const openId = message.FromUserName;
 
-    if (message.MsgType === 'text' && typeof message.Content === 'string') {
-      const content = message.Content.trim();
-
-      const chartV2Match = content.match(/^榜单\s*(.+)$/i); // 榜单查询（任何地区）
-      const chartMatch = content.match(/^(.*?)(免费榜|付费榜)$/); // 处理免费榜/付费榜
-
-      // 如果是榜单查询
-      if (chartV2Match && isSupportedRegion(chartV2Match[1])) {
-        const gate = await gateOrBypass(openId);
-        replyContent = gate.allowed
-          ? await Handlers.handleChartQuery(chartV2Match[1].trim(), '免费榜')
-          : gate.message;
+    // --- 事件消息 ---
+    if (message.MsgType === 'event') {
+      if (message.Event === 'subscribe') {
+        const { isFirst } = await checkSubscribeFirstTime(openId);
+        replyContent = isFirst ? buildWelcomeText('') : buildWelcomeText('欢迎回来！');
       }
+    } 
+    
+    // --- 文本消息 ---
+    else if (message.MsgType === 'text' && typeof message.Content === 'string') {
+      const content = message.Content.trim();
+      
+      if (/^myid$/i.test(content)) {
+        replyContent = `你的 OpenID：${openId}`;
+      } else {
+        // --- 正则定义 (修复了之前的匹配漏洞) ---
+        
+        // 1. 榜单查询 (格式：榜单美国)
+        const chartV2Match = content.match(/^榜单\s*(.+)$/i);
+        
+        // 2. 榜单详情 (格式：美国付费榜 / 日本免费榜)
+        // ⚡️ 关键修复：使用 .+? 配合 \s* 确保能正确抓取到前面的“日本”
+        const chartMatch = content.match(/^(.+?)\s*(免费榜|付费榜)$/i);
+        
+        // 3. 价格查询 (格式：价格 Minecraft 日本)
+        const priceMatchAdvanced = content.match(/^价格\s*(.+?)\s+([a-zA-Z\u4e00-\u9fa5]+)$/i);
+        // 4. 价格查询 (格式：价格 YouTube)
+        const priceMatchSimple = content.match(/^价格\s*(.+)$/i);
+        
+        // 5. 其他指令
+        const switchRegionMatch = content.match(/^(切换|地区)\s*([a-zA-Z\u4e00-\u9fa5]+)$/i);
+        const availabilityMatch = content.match(/^查询\s*(.+)$/i);
+        const osAllMatch = /^系统更新$/i.test(content);
+        const osUpdateMatch = content.match(/^(iOS|iPadOS|macOS|watchOS|tvOS|visionOS)$/i);
+        const iconMatch = content.match(/^图标\s*(.+)$/i);
 
-      // 如果是免费榜或者付费榜查询
-      else if (chartMatch && isSupportedRegion(chartMatch[1])) {
-        const gate = await gateOrBypass(openId);
-        const region = chartMatch[1].trim();
-        const chartType = chartMatch[2].trim(); // 区分免费榜或付费榜
+        // --- 逻辑分发 ---
+        
+        if (chartV2Match && isSupportedRegion(chartV2Match[1].trim())) {
+          // 命中：榜单美国
+          const gate = await gateOrBypass(openId);
+          replyContent = gate.allowed
+            ? await Handlers.handleChartQuery(chartV2Match[1].trim(), '免费榜')
+            : gate.message;
 
-        // 修复：确保点击菜单时能根据地区选择正确的榜单类型
-        replyContent = gate.allowed
-          ? await Handlers.handleChartQuery(region, chartType)
-          : gate.message;
+        } else if (chartMatch && isSupportedRegion(chartMatch[1].trim())) {
+          // 命中：日本付费榜
+          // 之前这里因为正则太弱，没抓到“日本”，现在修复了
+          const region = chartMatch[1].trim();
+          const type = chartMatch[2].trim();
+          
+          const gate = await gateOrBypass(openId);
+          replyContent = gate.allowed
+            ? await Handlers.handleChartQuery(region, type)
+            : gate.message;
+
+        } else if (priceMatchAdvanced && isSupportedRegion(priceMatchAdvanced[2])) {
+          // 命中：价格 Minecraft 日本
+          const gate = await gateOrBypass(openId);
+          replyContent = gate.allowed
+            ? await Handlers.handlePriceQuery(priceMatchAdvanced[1].trim(), priceMatchAdvanced[2].trim(), false)
+            : gate.message;
+
+        } else if (priceMatchSimple) {
+          // 命中：价格 YouTube
+          const gate = await gateOrBypass(openId);
+          if (!gate.allowed) {
+            replyContent = gate.message;
+          } else {
+            let queryAppName = priceMatchSimple[1].trim();
+            let targetRegion = '美国'; // 默认
+            let isDefaultSearch = true;
+            // 智能从尾部匹配地区
+            for (const countryName in ALL_SUPPORTED_REGIONS) {
+              if (queryAppName.endsWith(countryName) && queryAppName.length > countryName.length) {
+                targetRegion = countryName;
+                queryAppName = queryAppName.slice(0, -countryName.length).trim();
+                isDefaultSearch = false;
+                break;
+              }
+            }
+            replyContent = await Handlers.handlePriceQuery(queryAppName, targetRegion, isDefaultSearch);
+          }
+
+        } else if (osAllMatch) {
+          const gate = await gateOrBypass(openId);
+          replyContent = gate.allowed ? await Handlers.handleSimpleAllOsUpdates() : gate.message;
+
+        } else if (osUpdateMatch) {
+          const gate = await gateOrBypass(openId);
+          replyContent = gate.allowed ? await Handlers.handleDetailedOsUpdate(osUpdateMatch[1].trim()) : gate.message;
+
+        } else if (switchRegionMatch && isSupportedRegion(switchRegionMatch[2])) {
+          replyContent = Handlers.handleRegionSwitch(switchRegionMatch[2].trim());
+
+        } else if (availabilityMatch) {
+          const gate = await gateOrBypass(openId);
+          replyContent = gate.allowed ? await Handlers.handleAvailabilityQuery(availabilityMatch[1].trim()) : gate.message;
+
+        } else if (iconMatch) {
+          const appName = iconMatch[1].trim();
+          if (appName) {
+            const gate = await gateOrBypass(openId);
+            replyContent = gate.allowed ? await Handlers.lookupAppIcon(appName) : gate.message;
+          }
+        }
       }
     }
   } catch (error) {
