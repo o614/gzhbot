@@ -34,7 +34,6 @@ async function handlePostRequest(req, res) {
     const parsedXml = await parser.parseStringPromise(rawBody);
     message = parsedXml.xml || {};
 
-    // 修改点：关注回复内容更新
     if (message.MsgType === 'event' && message.Event === 'subscribe') {
       replyContent =
         `恭喜！你发现了果粉秘密基地\n\n` +
@@ -60,7 +59,11 @@ async function handlePostRequest(req, res) {
       
       const iconMatch = content.match(/^图标\s*(.+)$/i); 
       
-      const detailMatch = content.match(/^((查询|详情)\s*)?(.+)$/i); 
+      // 修改点：强制必须以“查询”开头，不再匹配所有文本
+      const detailMatch = content.match(/^查询\s*(.+)$/i); 
+      
+      // 修改点：处理菜单点击的固定关键词
+      const isAppQueryMenu = content === '应用查询';
 
       // 1. 榜单
       if (chartV2Match && isSupportedRegion(chartV2Match[1])) {
@@ -99,19 +102,13 @@ async function handlePostRequest(req, res) {
       } else if (iconMatch) {
         replyContent = await Handlers.lookupAppIcon(iconMatch[1].trim());
 
-      // 6. 详情 (兜底)
+      // 6. 详情 (修改后：仅在匹配到格式或点击菜单时触发)
+      } else if (isAppQueryMenu) {
+        // 用户点击了菜单，提示正确的格式
+        replyContent = '请回复“查询+应用名称”，例如：\n\n查询微信\n查询TikTok\n查询小红书';
       } else if (detailMatch) {
-        let keyword = content;
-        if (content.startsWith('查询') || content.startsWith('详情')) {
-             keyword = content.replace(/^(查询|详情)\s*/, '');
-        }
-        // 如果用户点击了“应用查询”菜单，这里会搜索“应用查询”这个词，
-        // 为了体验更好，如果关键词是“应用查询”，提示用户输入名称
-        if (keyword.trim() === '应用查询') {
-            replyContent = '请直接回复你想查询的应用名称，例如：\n\n微信\nTikTok\n小红书';
-        } else {
-            replyContent = await Handlers.handleAppDetails(keyword.trim());
-        }
+        // 用户回复了“查询 xxx”，执行查询
+        replyContent = await Handlers.handleAppDetails(detailMatch[1].trim());
       }
     }
   } catch (error) {
