@@ -1,6 +1,7 @@
 // api/wechat.js
 const crypto = require('crypto');
 const { Parser, Builder } = require('xml2js');
+// 确保 consts.js 里有 '日本':'jp'
 const { ALL_SUPPORTED_REGIONS } = require('./consts');
 const { isSupportedRegion, checkAbuseGate, checkSubscribeFirstTime } = require('./utils');
 const Handlers = require('./handlers');
@@ -64,64 +65,73 @@ async function handlePostRequest(req, res) {
 
     const openId = message.FromUserName;
 
+    // --- 事件消息 ---
     if (message.MsgType === 'event') {
       if (message.Event === 'subscribe') {
         const { isFirst } = await checkSubscribeFirstTime(openId);
         replyContent = isFirst ? buildWelcomeText('') : buildWelcomeText('欢迎回来！');
       }
-    } else if (message.MsgType === 'text' && typeof message.Content === 'string') {
+    } 
+    
+    // --- 文本消息 ---
+    else if (message.MsgType === 'text' && typeof message.Content === 'string') {
       const content = message.Content.trim();
-      console.log(`[Msg] ${openId}: ${content}`);
+      console.log(`[Msg] User: ${openId} | Content: "${content}"`); // 打印收到的原始内容
 
       if (/^myid$/i.test(content)) {
         replyContent = `你的 OpenID：${openId}`;
       } else {
-        // --- 路由匹配 ---
-        
-        // 1. 榜单查询：匹配 "榜单美国"
+        // --- 1. 正则匹配 ---
+        // 榜单查询：匹配 "榜单美国"
         const chartV2Match = content.match(/^榜单\s*(.+)$/i);
         
-        // 2. 榜单详情：匹配 "美国付费榜" (优化了正则，容错空格)
-        const chartMatch = content.match(/^(.+?)\s*(免费榜|付费榜)$/i);
+        // 榜单详情：匹配 "美国付费榜" (改为更宽松的匹配，允许两端有空格)
+        const chartMatch = content.match(/^\s*(.+?)\s*(免费榜|付费榜)\s*$/i);
         
-        // 3. 价格查询
+        // 价格查询
         const priceMatchAdvanced = content.match(/^价格\s*(.+?)\s+([a-zA-Z\u4e00-\u9fa5]+)$/i);
         const priceMatchSimple = content.match(/^价格\s*(.+)$/i);
         
-        // 4. 其他指令
+        // 其他
         const switchRegionMatch = content.match(/^(切换|地区)\s*([a-zA-Z\u4e00-\u9fa5]+)$/i);
         const availabilityMatch = content.match(/^查询\s*(.+)$/i);
         const osAllMatch = /^系统更新$/i.test(content);
         const osUpdateMatch = content.match(/^(iOS|iPadOS|macOS|watchOS|tvOS|visionOS)$/i);
         const iconMatch = content.match(/^图标\s*(.+)$/i);
 
-
-        // --- 逻辑处理 ---
-
+        // --- 2. 逻辑分发 ---
+        
         if (chartV2Match && isSupportedRegion(chartV2Match[1].trim())) {
-          // 命中：榜单美国 -> 默认查免费榜
+          console.log(`[Log] Matched ChartV2: ${chartV2Match[1]}`);
           const gate = await gateOrBypass(openId);
           replyContent = gate.allowed
             ? await Handlers.handleChartQuery(chartV2Match[1].trim(), '免费榜')
             : gate.message;
 
-        } else if (chartMatch && isSupportedRegion(chartMatch[1].trim())) {
-          // 命中：美国付费榜
-          // chartMatch[1] = 地区, chartMatch[2] = 类型
-          const gate = await gateOrBypass(openId);
-          replyContent = gate.allowed
-            ? await Handlers.handleChartQuery(chartMatch[1].trim(), chartMatch[2])
-            : gate.message;
+        } else if (chartMatch) {
+          // 调试：打印提取到的地区和类型
+          const region = chartMatch[1].trim();
+          const type = chartMatch[2].trim();
+          const isSupported = isSupportedRegion(region);
+          console.log(`[Log] Matched ChartDetail: Region="${region}" Supported=${isSupported}, Type="${type}"`);
+
+          if (isSupported) {
+            const gate = await gateOrBypass(openId);
+            replyContent = gate.allowed
+              ? await Handlers.handleChartQuery(region, type)
+              : gate.message;
+          } else {
+            console.log(`[Log] Region "${region}" not supported.`);
+            // 如果正则匹配了但地区不支持，也可以考虑提示，或者静默
+          }
 
         } else if (priceMatchAdvanced && isSupportedRegion(priceMatchAdvanced[2])) {
-          // 命中：价格 Minecraft 日本
           const gate = await gateOrBypass(openId);
           replyContent = gate.allowed
             ? await Handlers.handlePriceQuery(priceMatchAdvanced[1].trim(), priceMatchAdvanced[2].trim(), false)
             : gate.message;
 
         } else if (priceMatchSimple) {
-          // 命中：价格 YouTube
           const gate = await gateOrBypass(openId);
           if (!gate.allowed) {
             replyContent = gate.message;
@@ -161,11 +171,20 @@ async function handlePostRequest(req, res) {
             const gate = await gateOrBypass(openId);
             replyContent = gate.allowed ? await Handlers.lookupAppIcon(appName) : gate.message;
           }
+        } 
+        
+        // --- 3. 兜底调试 (如果上面都没进，回复这句) ---
+        if (!replyContent) {
+           console.log('[Log] No match found for:', content);
+           // 如果你想让用户知道指令不对，可以取消下面这行的注释
+           // replyContent = `未识别指令：${content}\n请检查格式或地区是否支持。`;
         }
       }
     }
   } catch (error) {
     console.error('Error processing POST:', error.message || error);
+    // 出错时也回复，方便知道崩了
+    replyContent = '系统内部错误，请稍后再试。';
   }
 
   if (replyContent) {
