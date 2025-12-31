@@ -27,6 +27,7 @@ async function handleChartQuery(regionName, chartType) {
       const apps = (data && data.feed && data.feed.entry) || [];
       if (!apps.length) return '获取榜单失败，可能 Apple 接口暂时繁忙。';
 
+      // 榜单时间保持原有格式 (getFormattedTime)
       let resultText = `${regionName}${chartType}\n${getFormattedTime()}\n\n`;
       resultText += apps.map((app, idx) => {
         const appId = app.id && app.id.attributes ? app.id.attributes['im:id'] : '';
@@ -70,7 +71,8 @@ async function handlePriceQuery(appName, regionName, isDefaultSearch) {
       const link = `<a href="${best.trackViewUrl}">${best.trackName}</a>`;
       const priceText = formatPrice(best);
 
-      let replyText = `您搜索的“${appName}”最匹配的结果是：\n\n${link}\n\n地区：${regionName}\n价格：${priceText}`;
+      // 修改点：您搜索的 -> 您查询的
+      let replyText = `您查询的“${appName}”最匹配的结果是：\n\n${link}\n\n地区：${regionName}\n价格：${priceText}`;
 
       if (typeof best.price === 'number' && best.price > 0 && best.currency) {
         const rate = await fetchExchangeRate(best.currency);
@@ -80,6 +82,7 @@ async function handlePriceQuery(appName, regionName, isDefaultSearch) {
         }
       }
 
+      // 价格查询时间保持原有格式
       replyText += `\n时间：${getFormattedTime()}`;
       if (isDefaultSearch) replyText += `\n\n想查其他地区？试试发送：\n价格 ${appName} 日本`;
       return replyText + `\n\n${SOURCE_NOTE}`;
@@ -117,7 +120,8 @@ async function lookupAppIcon(appName) {
       const finalIcon = (highRes && highRes !== app.artworkUrl100) ? highRes : (app.artworkUrl512 || app.artworkUrl100);
       
       const appLink = `<a href="${app.trackViewUrl}">${app.trackName}</a>`;
-      return `您搜索的“${appName}”最匹配的结果是：\n\n${appLink}\n\n高清图标链接：\n${finalIcon}\n\n${SOURCE_NOTE}`;
+      // 修改点：您搜索的 -> 您查询的
+      return `您查询的“${appName}”最匹配的结果是：\n\n${appLink}\n\n高清图标链接：\n${finalIcon}\n\n${SOURCE_NOTE}`;
     } catch (e) {
       return '查询应用图标失败，请稍后再试。';
     }
@@ -169,10 +173,12 @@ async function handleDetailedOsUpdate(inputPlatform = 'iOS') {
 
       const latest = list[0];
       const stableTag = /beta|rc|seed/i.test(JSON.stringify(latest.raw)) ? '' : ' — 正式版';
-      const latestDateStr = toBeijingYMD(latest.date) || '未知';
+      // 修改点：使用 toBeijingShortDate (YY/MM/DD)
+      const latestDateStr = toBeijingShortDate(latest.date) || '未知';
 
       const lines = list.slice(0,5).map(r=>{
-        const t = toBeijingYMD(r.date);
+        // 修改点：使用 toBeijingShortDate
+        const t = toBeijingShortDate(r.date);
         const releaseTag = /beta/i.test(JSON.stringify(r.raw)) ? ' (Beta)' : '';
         return `• ${r.version} (${r.build})${releaseTag}${t?` ${t}`:''}`;
       });
@@ -184,9 +190,8 @@ async function handleDetailedOsUpdate(inputPlatform = 'iOS') {
   });
 }
 
-// 6. 应用详情 (核心修改)
+// 6. 应用详情 (UI 更新)
 async function handleAppDetails(appName) {
-  // 默认查询美国区 (US)
   const code = 'us';
   const cacheKey = `wx:detail:us:${appName.toLowerCase().replace(/\s/g, '')}`;
 
@@ -199,21 +204,23 @@ async function handleAppDetails(appName) {
       }
 
       const app = data.results[0];
-      // 字段处理
       const rating = app.averageUserRating ? app.averageUserRating.toFixed(1) : '暂无';
       const size = formatBytes(app.fileSizeBytes || 0);
-      const updateDate = toBeijingShortDate(app.currentVersionReleaseDate); // 格式 25/12/17
+      // 修改点：日期使用 YY/MM/DD 格式
+      const updateDate = toBeijingShortDate(app.currentVersionReleaseDate); 
       const minOS = app.minimumOsVersion ? `${app.minimumOsVersion}+` : '未知';
 
+      // 修改点：您搜索的 -> 您查询的
       let reply = `您查询的“${appName}”最匹配的结果是：\n\n`;
-      reply += `${app.trackName}\n\n`; // 这里增加空行
-      reply += `评分：${rating}\n`; // 去掉星星
+      // 修改点：应用名直接加 <a> 标签
+      reply += `<a href="${app.trackViewUrl}">${app.trackName}</a>\n\n`; 
+      reply += `评分：${rating}\n`;
       reply += `大小：${size}\n`;
       reply += `更新：${updateDate}\n`;
       reply += `版本：${app.version}\n`;
       reply += `兼容：iOS ${minOS}\n`;
-      reply += `\n› <a href="${app.trackViewUrl}">点击前往 App Store 查看</a>`;
-      reply += `\n\n${SOURCE_NOTE}`;
+      // 修改点：移除底部 "点击前往 App Store 查看" 链接，因为上方已有链接
+      reply += `\n${SOURCE_NOTE}`;
 
       return reply;
     } catch (e) {
