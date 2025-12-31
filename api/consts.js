@@ -11,16 +11,8 @@ const BLOCKED_APP_IDS = new Set([
   '1442620678'
 ]);
 
-const TARGET_COUNTRIES_FOR_AVAILABILITY = [
-  { code: 'us', name: '美国' }, { code: 'hk', name: '香港' }, { code: 'mo', name: '澳门' },
-  { code: 'tw', name: '台湾' }, { code: 'jp', name: '日本' }, { code: 'kr', name: '韩国' },
-  { code: 'gb', name: '英国' }, { code: 'ca', name: '加拿大' }, { code: 'au', name: '澳大利亚' },
-  { code: 'sg', name: '新加坡' }, { code: 'tr', name: '土耳其' }, { code: 'ng', name: '尼日利亚' }
-];
-
 module.exports = {
   ALL_SUPPORTED_REGIONS,
   DSF_MAP,
-  BLOCKED_APP_IDS,
-  TARGET_COUNTRIES_FOR_AVAILABILITY
+  BLOCKED_APP_IDS
 };
