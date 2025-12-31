@@ -49,7 +49,7 @@ function getFormattedTime() {
 }
 
 // 封装 GET 请求
-async function getJSON(url, { timeout = 6000, retries = 1 } = {}) {
+async function getJSON(url, { timeout = 4000, retries = 1 } = {}) {
   let lastErr;
   for (let i = 0; i <= retries; i++) {
     try {
