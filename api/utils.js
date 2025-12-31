@@ -11,28 +11,17 @@ const HTTP = axios.create({
   headers: { 'user-agent': 'Mozilla/5.0 (Serverless-WeChatBot)' }
 });
 
-/**
- * 缓存包装器 (Cache Wrapper)
- * @param {string} key - Redis Key
- * @param {number} ttl - 过期时间(秒)
- * @param {Function} fetcher - 异步获取数据的函数
- */
 async function withCache(key, ttl, fetcher) {
-  // 如果没有配置 KV Token，直接降级为实时请求
   if (!process.env.KV_REST_API_TOKEN) {
     return await fetcher();
   }
-
   try {
     const cached = await kv.get(key);
     if (cached) return cached;
   } catch (e) {
     console.warn('KV Get Error:', e.message);
   }
-
-  // 缓存未命中，执行请求
   const data = await fetcher();
-
   if (data) {
     try {
       await kv.set(key, data, { ex: ttl });
@@ -43,7 +32,6 @@ async function withCache(key, ttl, fetcher) {
   return data;
 }
 
-// 格式化文件大小
 function formatBytes(bytes) {
   if (bytes === 0) return '0 B';
   const k = 1024;
@@ -52,7 +40,6 @@ function formatBytes(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-// 获取地区代码
 function getCountryCode(identifier) {
   const trimmed = String(identifier || '').trim();
   const key = trimmed.toLowerCase();
@@ -69,7 +56,6 @@ function isSupportedRegion(identifier) {
   return !!getCountryCode(identifier);
 }
 
-// 获取北京时间
 function getFormattedTime() {
   const now = new Date();
   const bj = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
@@ -81,26 +67,15 @@ function getFormattedTime() {
   return `${yyyy.slice(-2)}/${mm}/${dd} ${hh}:${mi}`;
 }
 
-// 封装 GET 请求
-async function getJSON(url) {
-  try {
-    const { data } = await HTTP.get(url);
-    return data;
-  } catch (err) {
-    console.error('Fetch Error:', url, err.message);
-    throw err;
-  }
+function getJSON(url) {
+  return HTTP.get(url).then(res => res.data);
 }
 
-// 价格相关工具
 function pickBestMatch(query, results) {
   const q = String(query || '').trim().toLowerCase();
   if (!q) return results[0];
   const exact = results.find(r => String(r.trackName || '').toLowerCase() === q);
-  if (exact) return exact;
-  const contains = results.find(r => String(r.trackName || '').toLowerCase().includes(q));
-  if (contains) return contains;
-  return results[0];
+  return exact || results.find(r => String(r.trackName || '').toLowerCase().includes(q)) || results[0];
 }
 
 function formatPrice(r) {
@@ -116,21 +91,17 @@ async function fetchExchangeRate(targetCurrencyCode) {
   try {
     const url = `https://api.frankfurter.app/latest?from=${targetCurrencyCode.toUpperCase()}&to=CNY`;
     const { data } = await axios.get(url, { timeout: 3000 });
-    if (data && data.rates && data.rates.CNY) {
-      return data.rates.CNY;
-    }
+    return data?.rates?.CNY || null;
   } catch (e) {
-    // 汇率获取失败不阻塞流程
+    return null;
   }
-  return null;
 }
 
-// 系统更新相关工具
 async function fetchGdmf() {
   const url = 'https://gdmf.apple.com/v2/pmv';
   const headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'application/json, text/plain, */*'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+    'Accept': 'application/json'
   };
   const agent = new https.Agent({ rejectUnauthorized: false });
   try {
@@ -160,14 +131,23 @@ function toBeijingYMD(s) {
   return `${y}-${m}-${d2}`;
 }
 
+// 新增：短日期格式 25/12/17
+function toBeijingShortDate(s) {
+  if (!s) return '';
+  const d = new Date(s); if (isNaN(d)) return '';
+  const bj = new Date(d.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
+  const y = String(bj.getFullYear()).slice(-2);
+  const m = String(bj.getMonth()+1).padStart(2,'0');
+  const d2 = String(bj.getDate()).padStart(2,'0');
+  return `${y}/${m}/${d2}`;
+}
+
 function collectReleases(data, platform) {
   const releases = [];
   const targetOS = normalizePlatform(platform);
   if (!targetOS || !data) return releases;
-
   const assetSetNames = ['PublicAssetSets', 'AssetSets'];
   const foundBuilds = new Set();
-
   for (const setName of assetSetNames) {
     const assetSet = data[setName];
     if (assetSet && typeof assetSet === 'object') {
@@ -177,19 +157,16 @@ function collectReleases(data, platform) {
               platformArray.forEach(node => {
                   if (node && typeof node === 'object') {
                       const version = node.ProductVersion || node.OSVersion || node.SystemVersion || null;
-                      const build   = node.Build || node.BuildID || node.BuildVersion || null;
-                      const dateStr = node.PostingDate || node.ReleaseDate || node.Date || node.PublishedDate || node.PublicationDate || null;
+                      const build = node.Build || node.BuildID || node.BuildVersion || null;
+                      const dateStr = node.PostingDate || node.ReleaseDate || node.Date || null;
                       const devices = node.SupportedDevices;
-
                       if (version && build && !foundBuilds.has(build)) {
                           const actualPlatforms = determinePlatformsFromDevices(devices);
                           if (actualPlatforms.has(targetOS)) {
                               releases.push({ os: targetOS, version, build, date: dateStr, raw: node });
                               foundBuilds.add(build);
                           } else if (targetOS === 'iPadOS' && actualPlatforms.has('iOS')) {
-                              // iPadOS fallback logic
-                              const versionNum = parseFloat(version);
-                              if (!isNaN(versionNum) && versionNum >= 13.0) {
+                              if (parseFloat(version) >= 13.0) {
                                   releases.push({ os: targetOS, version, build, date: dateStr, raw: node });
                                   foundBuilds.add(build);
                               }
@@ -207,41 +184,20 @@ function collectReleases(data, platform) {
 function determinePlatformsFromDevices(devices) {
     const platforms = new Set();
     if (!Array.isArray(devices)) return platforms;
-    let hasIOS = false; let hasIPadOS = false; let hasWatchOS = false;
-    let hasTVOS = false; let hasMacOS = false; let hasVisionOS = false;
     for (const device of devices) {
         const d = String(device || '').toLowerCase();
-        if (d.startsWith('iphone') || d.startsWith('ipod')) hasIOS = true;
-        else if (d.startsWith('ipad')) hasIPadOS = true;
-        else if (d.startsWith('watch')) hasWatchOS = true;
-        else if (d.startsWith('appletv') || d.startsWith('audioaccessory')) hasTVOS = true;
-        else if (d.startsWith('j') || d.startsWith('mac-') || d.includes('macos') || d.startsWith('vmm') || d.startsWith('x86') || /^[A-Z]\d{3}[A-Z]{2}AP$/i.test(device)) hasMacOS = true;
-        else if (d.startsWith('realitydevice')) hasVisionOS = true;
+        if (d.startsWith('iphone') || d.startsWith('ipod')) platforms.add('iOS');
+        else if (d.startsWith('ipad')) platforms.add('iPadOS');
+        else if (d.startsWith('watch')) platforms.add('watchOS');
+        else if (d.startsWith('appletv')) platforms.add('tvOS');
+        else if (d.includes('mac')) platforms.add('macOS');
+        else if (d.startsWith('realitydevice')) platforms.add('visionOS');
     }
-    if (hasIOS) platforms.add('iOS');
-    if (hasIPadOS) platforms.add('iPadOS');
-    if (hasWatchOS) platforms.add('watchOS');
-    if (hasTVOS) platforms.add('tvOS');
-    if (hasMacOS) platforms.add('macOS');
-    if (hasVisionOS) platforms.add('visionOS');
     return platforms;
 }
 
 module.exports = {
-  HTTP,
-  SOURCE_NOTE,
-  withCache,
-  formatBytes,
-  getCountryCode,
-  isSupportedRegion,
-  getFormattedTime,
-  getJSON,
-  pickBestMatch,
-  formatPrice,
-  fetchExchangeRate,
-  fetchGdmf,
-  normalizePlatform,
-  toBeijingYMD,
-  collectReleases,
-  determinePlatformsFromDevices
+  HTTP, SOURCE_NOTE, withCache, formatBytes, getCountryCode, isSupportedRegion,
+  getFormattedTime, getJSON, pickBestMatch, formatPrice, fetchExchangeRate, fetchGdmf,
+  normalizePlatform, toBeijingYMD, toBeijingShortDate, collectReleases
 };
