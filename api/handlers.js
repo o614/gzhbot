@@ -188,7 +188,6 @@ async function handleDetailedOsUpdate(inputPlatform = 'iOS') {
 async function handleAppDetails(appName) {
   // 默认查询美国区 (US)
   const code = 'us';
-  // 搜索 key
   const cacheKey = `wx:detail:us:${appName.toLowerCase().replace(/\s/g, '')}`;
 
   return await withCache(cacheKey, CACHE_TTL_SHORT, async () => {
@@ -203,16 +202,12 @@ async function handleAppDetails(appName) {
       // 字段处理
       const rating = app.averageUserRating ? app.averageUserRating.toFixed(1) : '暂无';
       const size = formatBytes(app.fileSizeBytes || 0);
-      const updateDate = toBeijingShortDate(app.currentVersionReleaseDate); // 25/12/17
+      const updateDate = toBeijingShortDate(app.currentVersionReleaseDate); // 格式 25/12/17
       const minOS = app.minimumOsVersion ? `${app.minimumOsVersion}+` : '未知';
-      const seller = app.artistName || app.sellerName || '未知';
-      const category = app.primaryGenreName || '未知';
 
       let reply = `您查询的“${appName}”最匹配的结果是：\n\n`;
-      reply += `${app.trackName}\n`;
-      reply += `评分：${rating}\n`;
-      reply += `分类：${category}\n`; // 替代排行榜
-      reply += `开发者：${seller}\n`;
+      reply += `${app.trackName}\n\n`; // 这里增加空行
+      reply += `评分：${rating}\n`; // 去掉星星
       reply += `大小：${size}\n`;
       reply += `更新：${updateDate}\n`;
       reply += `版本：${app.version}\n`;
