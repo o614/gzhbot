@@ -34,20 +34,19 @@ async function handlePostRequest(req, res) {
     const parsedXml = await parser.parseStringPromise(rawBody);
     message = parsedXml.xml || {};
 
+    // 修改点：关注回复内容更新
     if (message.MsgType === 'event' && message.Event === 'subscribe') {
       replyContent =
-        `欢迎关注！这里是果粉实用工具箱\n\n` +
-        `你可以直接发送应用名称查询详情，或使用以下功能：\n\n` +
-        `› <a href="weixin://bizmsgmenu?msgmenucontent=榜单美国&msgmenuid=1">榜单查询</a> (查热门应用)\n\n` +
-        `› <a href="weixin://bizmsgmenu?msgmenucontent=价格YouTube&msgmenuid=2">价格查询</a> (查应用价格)\n\n` +
-        `› <a href="weixin://bizmsgmenu?msgmenucontent=系统更新&msgmenuid=3">系统更新</a> (iOS 固件)\n\n` +
-        `› <a href="weixin://bizmsgmenu?msgmenucontent=切换美国&msgmenuid=4">跨区切换</a> (免号看商店)\n\n` +
-        `› <a href="weixin://bizmsgmenu?msgmenucontent=图标微信&msgmenuid=5">图标获取</a> (高清源图)\n\n` +
-        `直接发送 "微信" 或 "查询微信" 试试看！`;
+        `恭喜！你发现了果粉秘密基地\n\n` +
+        `› <a href="weixin://bizmsgmenu?msgmenucontent=付款方式&msgmenuid=付款方式">付款方式</a>\n获取注册地址信息\n\n` +
+        `› <a href="weixin://bizmsgmenu?msgmenucontent=应用查询&msgmenuid=1">应用查询</a>\n热门应用详情查询\n\n` +
+        `› <a href="weixin://bizmsgmenu?msgmenucontent=榜单美国&msgmenuid=3">榜单美国</a>\n全球免费付费榜单\n\n` +
+        `› <a href="weixin://bizmsgmenu?msgmenucontent=价格YouTube&msgmenuid=2">价格YouTube</a>\n应用价格优惠查询\n\n` +
+        `› <a href="weixin://bizmsgmenu?msgmenucontent=切换美国&msgmenuid=4">切换美国</a>\n应用商店随意切换\n\n` +
+        `› <a href="weixin://bizmsgmenu?msgmenucontent=图标QQ&msgmenuid=5">图标QQ</a>\n获取官方高清图标\n\n更多服务请戳底部菜单栏了解`;
     } else if (message.MsgType === 'text' && typeof message.Content === 'string') {
       const content = message.Content.trim();
       
-      // 正则匹配
       const chartMatch = content.match(/^(.*?)(免费榜|付费榜)$/); 
       const chartV2Match = content.match(/^榜单\s*(.+)$/i); 
       
@@ -61,7 +60,7 @@ async function handlePostRequest(req, res) {
       
       const iconMatch = content.match(/^图标\s*(.+)$/i); 
       
-      const detailMatch = content.match(/^((查询|详情)\s*)?(.+)$/i); // 捕获所有文本，用于最后兜底
+      const detailMatch = content.match(/^((查询|详情)\s*)?(.+)$/i); 
 
       // 1. 榜单
       if (chartV2Match && isSupportedRegion(chartV2Match[1])) {
@@ -76,7 +75,6 @@ async function handlePostRequest(req, res) {
         let queryAppName = priceMatchSimple[1].trim();
         let targetRegion = '美国';
         let isDefaultSearch = true;
-        // 尝试从尾部提取地区
         for (const countryName in ALL_SUPPORTED_REGIONS) {
           if (queryAppName.endsWith(countryName) && queryAppName.length > countryName.length) {
             targetRegion = countryName;
@@ -101,14 +99,17 @@ async function handlePostRequest(req, res) {
       } else if (iconMatch) {
         replyContent = await Handlers.lookupAppIcon(iconMatch[1].trim());
 
-      // 6. 详情 (兜底逻辑)
+      // 6. 详情 (兜底)
       } else if (detailMatch) {
-        // 去掉可能的 "查询" 前缀，保留关键词
         let keyword = content;
         if (content.startsWith('查询') || content.startsWith('详情')) {
              keyword = content.replace(/^(查询|详情)\s*/, '');
         }
-        if (keyword) {
+        // 如果用户点击了“应用查询”菜单，这里会搜索“应用查询”这个词，
+        // 为了体验更好，如果关键词是“应用查询”，提示用户输入名称
+        if (keyword.trim() === '应用查询') {
+            replyContent = '请直接回复你想查询的应用名称，例如：\n\n微信\nTikTok\n小红书';
+        } else {
             replyContent = await Handlers.handleAppDetails(keyword.trim());
         }
       }
