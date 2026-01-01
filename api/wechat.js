@@ -13,14 +13,14 @@ module.exports = async (req, res) => {
   if (req.method === 'GET') return handleVerification(req, res);
   
   if (req.method === 'POST') {
-    // 【核心保护】4.5秒超时熔断，防止微信发起重试轰炸
+    // 【核心保护】4.5秒超时熔断,防止微信发起重试轰炸
     const task = handlePostRequest(req, res);
     const timeout = new Promise(resolve => setTimeout(() => resolve('TIMEOUT'), 4500));
 
     try {
       const result = await Promise.race([task, timeout]);
       if (result === 'TIMEOUT') {
-        // 超时了，直接返回空，结束战斗
+        // 超时了,直接返回空,结束战斗
         return res.status(200).send(''); 
       }
       return result; 
@@ -70,13 +70,14 @@ async function handlePostRequest(req, res) {
       // 【核心保护】用户限流检查
       const isAllowed = await checkUserRateLimit(fromUser);
       if (!isAllowed) {
-        const xml = buildTextReply(message.FromUserName, message.ToUserName, '您今天的查询次数已达上限，请明天再来吧！');
+        const xml = buildTextReply(message.FromUserName, message.ToUserName, '您今天的查询次数已达上限,请明天再来吧!');
         return res.setHeader('Content-Type', 'application/xml').status(200).send(xml);
       }
 
-      // 宽容正则，允许前后空格
+      // 【核心修复】先匹配更具体的格式(带地区的榜单)
       const chartMatch = content.match(/^\s*(.*?)\s*(免费榜|付费榜)\s*$/); 
       const chartV2Match = content.match(/^榜单\s*(.+)$/i); 
+      
       const priceMatchAdvanced = content.match(/^价格\s*(.+?)\s+([a-zA-Z\u4e00-\u9fa5]+)$/i); 
       const priceMatchSimple = content.match(/^价格\s*(.+)$/i); 
       const switchRegionMatch = content.match(/^(切换|地区)\s*([a-zA-Z\u4e00-\u9fa5]+)$/i); 
@@ -87,20 +88,23 @@ async function handlePostRequest(req, res) {
       const isAppQueryMenu = content === '应用查询';
       const adminMatch = content === '管理后台' || content === '后台数据';
 
-      // 路由分发
-      if (chartV2Match && isSupportedRegion(chartV2Match[1])) {
+      // 【核心修复】路由分发 - 先处理带地区的榜单
+      if (chartMatch && isSupportedRegion(chartMatch[1])) {
+        // "日本付费榜" 或 "jp付费榜" 都走这里
+        console.log('[ChartMatch] Input:', chartMatch[1], 'Type:', chartMatch[2]);
+        replyContent = await Handlers.handleChartQuery(chartMatch[1].trim(), chartMatch[2].trim());
+      } else if (chartV2Match && isSupportedRegion(chartV2Match[1])) {
+        // "榜单 日本"
+        console.log('[ChartV2Match] Input:', chartV2Match[1]);
         replyContent = await Handlers.handleChartQuery(chartV2Match[1].trim(), '免费榜');
-      } else if (chartMatch && isSupportedRegion(chartMatch[1])) {
-        // 由于有双向字典，chartMatch[1] 即使是 'jp' 也能直接查到
-        replyContent = await Handlers.handleChartQuery(chartMatch[1].trim(), chartMatch[2]);
       } else if (priceMatchAdvanced && isSupportedRegion(priceMatchAdvanced[2])) {
         replyContent = await Handlers.handlePriceQuery(priceMatchAdvanced[1].trim(), priceMatchAdvanced[2].trim(), false);
       } else if (priceMatchSimple) {
         let queryAppName = priceMatchSimple[1].trim();
         let targetRegion = '美国';
         let isDefaultSearch = true;
+        // 处理类似 "价格Instagram土耳其" 这种连在一起的输入
         for (const countryName in ALL_SUPPORTED_REGIONS) {
-          // 处理类似 "价格Instagram土耳其" 这种连在一起的输入
           if (queryAppName.endsWith(countryName) && queryAppName.length > countryName.length) {
             targetRegion = countryName;
             queryAppName = queryAppName.slice(0, -countryName.length).trim();
@@ -118,14 +122,16 @@ async function handlePostRequest(req, res) {
       } else if (iconMatch) {
         replyContent = await Handlers.lookupAppIcon(iconMatch[1].trim());
       } else if (isAppQueryMenu) {
-        replyContent = '请回复“查询+应用名称”，例如：\n\n查询微信\n查询TikTok\n查询小红书';
+        replyContent = '请回复"查询+应用名称",例如:\n\n查询微信\n查询TikTok\n查询小红书';
       } else if (detailMatch) {
         replyContent = await Handlers.handleAppDetails(detailMatch[1].trim());
       } else if (adminMatch) {
         replyContent = await Handlers.handleAdminStatus(fromUser);
       }
     }
-  } catch (error) { console.error('Error processing POST:', error.message || error); }
+  } catch (error) { 
+    console.error('Error processing POST:', error.message || error); 
+  }
 
   if (replyContent) {
     const xml = buildTextReply(message.FromUserName, message.ToUserName, replyContent);
