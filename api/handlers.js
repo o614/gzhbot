@@ -3,10 +3,11 @@ const {
   getCountryCode, getJSON, getFormattedTime, SOURCE_NOTE, 
   pickBestMatch, formatPrice, fetchExchangeRate, 
   fetchGdmf, collectReleases, normalizePlatform, toBeijingYMD,
-  toBeijingShortDate, withCache, formatBytes
+  toBeijingShortDate, withCache, formatBytes, checkUrlAccessibility
 } = require('./utils');
 
-const { DSF_MAP, BLOCKED_APP_IDS } = require('./consts');
+const { DSF_MAP, BLOCKED_APP_IDS, ADMIN_OPENID, DAILY_REQUEST_LIMIT } = require('./consts');
+const { kv } = require('@vercel/kv'); // 用于管理后台查询
 
 const CACHE_TTL_SHORT = 600; 
 const CACHE_TTL_LONG = 1800; 
@@ -27,7 +28,6 @@ async function handleChartQuery(regionName, chartType) {
       const apps = (data && data.feed && data.feed.entry) || [];
       if (!apps.length) return '获取榜单失败，可能 Apple 接口暂时繁忙。';
 
-      // 榜单时间保持原有格式 (getFormattedTime)
       let resultText = `${regionName}${chartType}\n${getFormattedTime()}\n\n`;
       resultText += apps.map((app, idx) => {
         const appId = app.id && app.id.attributes ? app.id.attributes['im:id'] : '';
@@ -42,7 +42,8 @@ async function handleChartQuery(regionName, chartType) {
         return appUrl ? `${idx + 1}、<a href="${appUrl}">${appName}</a>` : `${idx + 1}、${appName}`;
       }).join('\n');
 
-      const toggleCmd = chartType === '免费榜' ? `${regionName}付费榜` : `${regionName}免费榜`;
+      // 修复：强制使用 code 生成按钮指令
+      const toggleCmd = chartType === '免费榜' ? `${regionCode}付费榜` : `${regionCode}免费榜`;
       resultText += `\n› <a href="weixin://bizmsgmenu?msgmenucontent=${encodeURIComponent(toggleCmd)}&msgmenuid=chart_toggle">查看${chartType === '免费榜' ? '付费' : '免费'}榜单</a>`;
       resultText += `\n\n${SOURCE_NOTE}`;
       return resultText;
@@ -71,7 +72,6 @@ async function handlePriceQuery(appName, regionName, isDefaultSearch) {
       const link = `<a href="${best.trackViewUrl}">${best.trackName}</a>`;
       const priceText = formatPrice(best);
 
-      // 修改点：您搜索的 -> 您查询的
       let replyText = `您查询的“${appName}”最匹配的结果是：\n\n${link}\n\n地区：${regionName}\n价格：${priceText}`;
 
       if (typeof best.price === 'number' && best.price > 0 && best.currency) {
@@ -82,7 +82,6 @@ async function handlePriceQuery(appName, regionName, isDefaultSearch) {
         }
       }
 
-      // 价格查询时间保持原有格式
       replyText += `\n时间：${getFormattedTime()}`;
       if (isDefaultSearch) replyText += `\n\n想查其他地区？试试发送：\n价格 ${appName} 日本`;
       return replyText + `\n\n${SOURCE_NOTE}`;
@@ -106,7 +105,7 @@ function handleRegionSwitch(regionName) {
   return `注意！仅浏览，需账号才能下载。\n\n<a href="${fullUrl}">› 点击切换至【${regionName}】 App Store</a>\n\n› 点此切换至 <a href="${cnUrl}">【大陆】</a> App Store\n\n*出现“无法连接”后将自动跳转*`;
 }
 
-// 4. 图标查询
+// 4. 图标查询 (含防404优化)
 async function lookupAppIcon(appName) {
   const cacheKey = `wx:icon:us:${appName.toLowerCase().replace(/\s/g, '')}`;
   return await withCache(cacheKey, CACHE_TTL_SHORT, async () => {
@@ -116,11 +115,22 @@ async function lookupAppIcon(appName) {
       if (data.resultCount === 0) return '未找到相关应用，请检查名称。';
 
       const app = data.results[0];
+      const standardIcon = app.artworkUrl512 || app.artworkUrl100;
+      
+      // 尝试获取高清图链接
       const highRes = String(app.artworkUrl100 || '').replace('100x100bb.jpg', '1024x1024bb.jpg');
-      const finalIcon = (highRes && highRes !== app.artworkUrl100) ? highRes : (app.artworkUrl512 || app.artworkUrl100);
+      
+      let finalIcon = standardIcon;
+
+      // 【防404优化】如果推测出的高清图链接和原图不同，先检测一下存不存在
+      if (highRes && highRes !== app.artworkUrl100) {
+        const isHighResAvailable = await checkUrlAccessibility(highRes);
+        if (isHighResAvailable) {
+          finalIcon = highRes;
+        }
+      }
       
       const appLink = `<a href="${app.trackViewUrl}">${app.trackName}</a>`;
-      // 修改点：您搜索的 -> 您查询的
       return `您查询的“${appName}”最匹配的结果是：\n\n${appLink}\n\n高清图标链接：\n${finalIcon}\n\n${SOURCE_NOTE}`;
     } catch (e) {
       return '查询应用图标失败，请稍后再试。';
@@ -173,11 +183,9 @@ async function handleDetailedOsUpdate(inputPlatform = 'iOS') {
 
       const latest = list[0];
       const stableTag = /beta|rc|seed/i.test(JSON.stringify(latest.raw)) ? '' : ' — 正式版';
-      // 修改点：使用 toBeijingShortDate (YY/MM/DD)
       const latestDateStr = toBeijingShortDate(latest.date) || '未知';
 
       const lines = list.slice(0,5).map(r=>{
-        // 修改点：使用 toBeijingShortDate
         const t = toBeijingShortDate(r.date);
         const releaseTag = /beta/i.test(JSON.stringify(r.raw)) ? ' (Beta)' : '';
         return `• ${r.version} (${r.build})${releaseTag}${t?` ${t}`:''}`;
@@ -190,7 +198,7 @@ async function handleDetailedOsUpdate(inputPlatform = 'iOS') {
   });
 }
 
-// 6. 应用详情 (UI 更新)
+// 6. 应用详情
 async function handleAppDetails(appName) {
   const code = 'us';
   const cacheKey = `wx:detail:us:${appName.toLowerCase().replace(/\s/g, '')}`;
@@ -206,20 +214,16 @@ async function handleAppDetails(appName) {
       const app = data.results[0];
       const rating = app.averageUserRating ? app.averageUserRating.toFixed(1) : '暂无';
       const size = formatBytes(app.fileSizeBytes || 0);
-      // 修改点：日期使用 YY/MM/DD 格式
       const updateDate = toBeijingShortDate(app.currentVersionReleaseDate); 
       const minOS = app.minimumOsVersion ? `${app.minimumOsVersion}+` : '未知';
 
-      // 修改点：您搜索的 -> 您查询的
       let reply = `您查询的“${appName}”最匹配的结果是：\n\n`;
-      // 修改点：应用名直接加 <a> 标签
       reply += `<a href="${app.trackViewUrl}">${app.trackName}</a>\n\n`; 
       reply += `评分：${rating}\n`;
       reply += `大小：${size}\n`;
       reply += `更新：${updateDate}\n`;
       reply += `版本：${app.version}\n`;
       reply += `兼容：iOS ${minOS}\n`;
-      // 修改点：移除底部 "点击前往 App Store 查看" 链接，因为上方已有链接
       reply += `\n${SOURCE_NOTE}`;
 
       return reply;
@@ -230,6 +234,20 @@ async function handleAppDetails(appName) {
   });
 }
 
+// [新增] 7. 管理员后台状态
+async function handleAdminStatus(fromUser) {
+  if (fromUser !== ADMIN_OPENID) return ''; // 闲人免进
+
+  try {
+    // 简单的统计 (注意: dbsize 可能在 Vercel KV 免费版有限制，但通常可用)
+    // 这里我们只做简单的连通性检查和返回
+    const dbSize = await kv.dbsize(); 
+    return `【后台管理系统】\n\n状态：运行中\n缓存Key数量：${dbSize}\n每日限额：${DAILY_REQUEST_LIMIT}次/人\n\n系统时间：${getFormattedTime()}`;
+  } catch (e) {
+    return `后台查询出错：${e.message}`;
+  }
+}
+
 module.exports = {
   handleChartQuery,
   handlePriceQuery,
@@ -237,5 +255,6 @@ module.exports = {
   lookupAppIcon,
   handleSimpleAllOsUpdates,
   handleDetailedOsUpdate,
-  handleAppDetails
+  handleAppDetails,
+  handleAdminStatus
 };
