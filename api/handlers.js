@@ -8,7 +8,6 @@ const {
 
 const { DSF_MAP, BLOCKED_APP_IDS, ADMIN_OPENID, DAILY_REQUEST_LIMIT } = require('./consts');
 
-// 引入 KV 的安全写法
 let kv = null;
 try { ({ kv } = require('@vercel/kv')); } catch (e) { kv = null; }
 
@@ -29,21 +28,18 @@ async function handleChartQuery(regionName, chartType) {
     try {
       const data = await getJSON(url);
       const apps = (data && data.feed && data.feed.results) || [];
-      
       if (!apps.length) return '获取榜单失败，可能 Apple 接口暂时繁忙。';
 
       let resultText = `${regionName}${chartType}\n${getFormattedTime()}\n\n`;
-
       resultText += apps.map((app, idx) => {
         const appId = String(app.id || '');
         const appName = app.name || '未知应用';
         const appUrl = app.url;
-
         if (BLOCKED_APP_IDS.has(appId)) return `${idx + 1}、${appName}`;
         return appUrl ? `${idx + 1}、<a href="${appUrl}">${appName}</a>` : `${idx + 1}、${appName}`;
       }).join('\n');
 
-      const toggleCmd = chartType === '免费榜' ? `${regionCode}付费榜` : `${regionCode}免费榜`;
+      const toggleCmd = chartType === '免费榜' ? `${regionName}付费榜` : `${regionName}免费榜`;
       resultText += `\n› <a href="weixin://bizmsgmenu?msgmenucontent=${encodeURIComponent(toggleCmd)}&msgmenuid=chart_toggle">查看${chartType === '免费榜' ? '付费' : '免费'}榜单</a>`;
       resultText += `\n\n${SOURCE_NOTE}`;
       return resultText;
@@ -73,7 +69,6 @@ async function handlePriceQuery(appName, regionName, isDefaultSearch) {
       const priceText = formatPrice(best);
 
       let replyText = `您查询的“${appName}”最匹配的结果是：\n\n${link}\n\n地区：${regionName}\n价格：${priceText}`;
-
       if (typeof best.price === 'number' && best.price > 0 && best.currency) {
         const rate = await fetchExchangeRate(best.currency);
         if (rate) {
@@ -81,7 +76,6 @@ async function handlePriceQuery(appName, regionName, isDefaultSearch) {
           replyText += ` (≈ ¥${cnyPrice})`;
         }
       }
-
       replyText += `\n时间：${getFormattedTime()}`;
       if (isDefaultSearch) replyText += `\n\n想查其他地区？试试发送：\n价格 ${appName} 日本`;
       return replyText + `\n\n${SOURCE_NOTE}`;
@@ -96,7 +90,6 @@ function handleRegionSwitch(regionName) {
   const regionCode = getCountryCode(regionName);
   const dsf = DSF_MAP[regionCode];
   if (!regionCode || !dsf) return '不支持的地区或格式错误。';
-
   const stableAppId = '375380948';
   const redirect = `/WebObjects/MZStore.woa/wa/viewSoftware?mt=8&id=${stableAppId}`;
   const fullUrl = `https://itunes.apple.com/WebObjects/MZStore.woa/wa/resetAndRedirect?dsf=${dsf}&cc=${regionCode}&url=${encodeURIComponent(redirect)}`;
@@ -106,7 +99,7 @@ function handleRegionSwitch(regionName) {
   return `注意！仅浏览，需账号才能下载。\n\n<a href="${fullUrl}">› 点击切换至【${regionName}】 App Store</a>\n\n› 点此切换至 <a href="${cnUrl}">【大陆】</a> App Store\n\n*出现“无法连接”后将自动跳转*`;
 }
 
-// 4. 应用详情 (极简UI)
+// 4. 应用详情
 async function handleAppDetails(appName) {
   const code = 'us';
   const cacheKey = `wx:detail:us:${appName.toLowerCase().replace(/\s/g, '')}`;
@@ -118,12 +111,9 @@ async function handleAppDetails(appName) {
       if (!data || !data.results || data.results.length === 0) {
         return `未找到应用“${appName}”，请检查名称或稍后再试。`;
       }
-
       const app = data.results[0];
       const rating = app.averageUserRating ? app.averageUserRating.toFixed(1) : '暂无';
-      // 安全处理文件大小
       const size = formatBytes(app.fileSizeBytes || 0);
-      // 安全处理日期
       const updateDate = toBeijingShortDate(app.currentVersionReleaseDate); 
       const minOS = app.minimumOsVersion ? `${app.minimumOsVersion}+` : '未知';
 
@@ -135,7 +125,6 @@ async function handleAppDetails(appName) {
       reply += `版本：${app.version}\n`;
       reply += `兼容：iOS ${minOS}\n`;
       reply += `\n${SOURCE_NOTE}`;
-
       return reply;
     } catch (e) {
       console.error('App Detail Error:', e);
@@ -144,7 +133,7 @@ async function handleAppDetails(appName) {
   });
 }
 
-// 5. 图标查询 (含防404)
+// 5. 图标查询
 async function lookupAppIcon(appName) {
   const cacheKey = `wx:icon:us:${appName.toLowerCase().replace(/\s/g, '')}`;
   return await withCache(cacheKey, CACHE_TTL_SHORT, async () => {
@@ -152,7 +141,6 @@ async function lookupAppIcon(appName) {
       const url = `https://itunes.apple.com/search?term=${encodeURIComponent(appName)}&country=us&entity=software&limit=1`;
       const data = await getJSON(url);
       if (data.resultCount === 0) return '未找到相关应用，请检查名称。';
-
       const app = data.results[0];
       const highRes = String(app.artworkUrl100 || '').replace('100x100bb.jpg', '1024x1024bb.jpg');
       
@@ -174,7 +162,7 @@ async function lookupAppIcon(appName) {
   });
 }
 
-// 6. 系统更新
+// 6. 系统更新 (【加回】超链接)
 async function handleSimpleAllOsUpdates() {
   const cacheKey = `wx:os:simple_all`;
   return await withCache(cacheKey, CACHE_TTL_LONG, async () => {
@@ -190,7 +178,12 @@ async function handleSimpleAllOsUpdates() {
         }
       }
       if (!results.length) return '暂未获取到系统版本信息，请稍后再试。';
-      return `最新系统版本：\n\n${results.join('\n')}\n\n如需查看详细版本，请发送：\n更新 iOS、更新 macOS、更新 watchOS...\n\n*数据来源 Apple 官方*`;
+      
+      // 【这里改回来了】变成可点击的链接
+      let replyText = `最新系统版本：\n\n${results.join('\n')}\n\n查看详情：\n`;
+      replyText += `› <a href="weixin://bizmsgmenu?msgmenucontent=iOS&msgmenuid=iOS">iOS</a>      › <a href="weixin://bizmsgmenu?msgmenucontent=iPadOS&msgmenuid=iPadOS">iPadOS</a>\n`;
+      replyText += `› <a href="weixin://bizmsgmenu?msgmenucontent=macOS&msgmenuid=macOS">macOS</a>    › <a href="weixin://bizmsgmenu?msgmenucontent=watchOS&msgmenuid=watchOS">watchOS</a>\n`;
+      return replyText + `\n${SOURCE_NOTE}`;
     } catch (e) {
       return '查询系统版本失败，请稍后再试。';
     }
@@ -219,10 +212,10 @@ async function handleDetailedOsUpdate(inputPlatform = 'iOS') {
       const lines = list.slice(0,5).map(r=>{
         const t = toBeijingShortDate(r.date);
         const releaseTag = /beta/i.test(JSON.stringify(r.raw)) ? ' (Beta)' : '';
-        return `• ${r.version} (${r.build})${releaseTag}${t?` — ${t}`:''}`;
+        return `• ${r.version} (${r.build})${releaseTag}${t?` ${t}`:''}`;
       });
 
-      return `${platform} 最新公开版本：\n版本：${latest.version}（${latest.build}）${stableTag}\n发布时间：${latestDateStr}\n\n近期版本：\n${lines.join('\n')}\n\n查询时间：${getFormattedTime()}\n\n${SOURCE_NOTE}`;
+      return `${platform} 最新版本：\n版本：${latest.version}（${latest.build}）${stableTag}\n时间：${latestDateStr}\n\n近期历史：\n${lines.join('\n')}\n\n${SOURCE_NOTE}`;
     } catch (e) {
       return '查询系统版本失败，请稍后再试。';
     }
