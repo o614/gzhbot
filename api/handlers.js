@@ -22,6 +22,10 @@ async function handleChartQuery(regionInput, chartType) {
 
   // 【修复】获取中文名称用于显示 (把 'jp' 变回 '日本')
   const displayName = getCountryName(regionCode);
+  // 如果 regionInput 本身就是中文名（如“美国”），直接用它作为交互文案会更自然
+  // 但为了保险起见，这里统一使用标准化的 displayName (比如用户输入 'us'，这里也会变成 '美国')
+  // 如果 getCountryName 返回空，兜底使用用户输入
+  const interactiveName = displayName || regionInput;
 
   const cacheKey = `wx:chart:${regionCode}:${chartType === '免费榜' ? 'free' : 'paid'}`;
 
@@ -36,7 +40,7 @@ async function handleChartQuery(regionInput, chartType) {
       if (!apps.length) return '获取榜单失败，可能 Apple 接口暂时繁忙。';
 
       // 标题使用中文名
-      let resultText = `${displayName}${chartType}\n${getFormattedTime()}\n\n`;
+      let resultText = `${interactiveName}${chartType}\n${getFormattedTime()}\n\n`;
 
       resultText += apps.map((app, idx) => {
         const appId = String(app.id || '');
@@ -46,8 +50,10 @@ async function handleChartQuery(regionInput, chartType) {
         return appUrl ? `${idx + 1}、<a href="${appUrl}">${appName}</a>` : `${idx + 1}、${appName}`;
       }).join('\n');
 
-      // 按钮依然使用 Code (jp) 保证稳定性
-      const toggleCmd = chartType === '免费榜' ? `${regionCode}付费榜` : `${regionCode}免费榜`;
+      // 【修改点】 按钮改为使用中文名 (interactiveName)，确保和用户输入习惯一致
+      // 之前是: const toggleCmd = chartType === '免费榜' ? `${regionCode}付费榜` : `${regionCode}免费榜`;
+      const toggleCmd = chartType === '免费榜' ? `${interactiveName}付费榜` : `${interactiveName}免费榜`;
+      
       resultText += `\n› <a href="weixin://bizmsgmenu?msgmenucontent=${encodeURIComponent(toggleCmd)}&msgmenuid=chart_toggle">查看${chartType === '免费榜' ? '付费' : '免费'}榜单</a>`;
       resultText += `\n\n${SOURCE_NOTE}`;
       return resultText;
@@ -190,7 +196,7 @@ async function handleSimpleAllOsUpdates() {
       // 【修复】恢复点击链接
       let replyText = `最新系统版本：\n\n${results.join('\n')}\n\n查看详情：\n`;
       replyText += `› <a href="weixin://bizmsgmenu?msgmenucontent=更新iOS&msgmenuid=iOS">iOS</a>      › <a href="weixin://bizmsgmenu?msgmenucontent=更新iPadOS&msgmenuid=iPadOS">iPadOS</a>\n`;
-      replyText += `› <a href="weixin://bizmsgmenu?msgmenucontent=更新macOS&msgmenuid=macOS">macOS</a>    › <a href="weixin://bizmsgmenu?msgmenucontent=更新watchOS&msgmenuid=watchOS">watchOS</a>\n`;
+      replyText += `› <a href="weixin://bizmsgmenu?msgmenucontent=更新macOS&msgmenuid=macOS">macOS</a>     › <a href="weixin://bizmsgmenu?msgmenucontent=更新watchOS&msgmenuid=watchOS">watchOS</a>\n`;
       // 【修复】加回时间
       replyText += `\n查询时间：${getFormattedTime()}\n\n${SOURCE_NOTE}`;
       
