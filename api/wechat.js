@@ -1,19 +1,33 @@
-// api/wechat.js
 const crypto = require('crypto');
 const axios = require('axios');
 const { Parser, Builder } = require('xml2js');
 const https = require('https');
 
-// 引入外部数据文件 (保持分离结构)
-const { ALL_SUPPORTED_REGIONS, DSF_MAP, BLOCKED_APP_IDS, TARGET_COUNTRIES_FOR_AVAILABILITY } = require('./consts');
+const CONFIG = {
+  WECHAT_TOKEN: process.env.WECHAT_TOKEN,
+  ALL_SUPPORTED_REGIONS: { '阿富汗':'af','中国':'cn','阿尔巴尼亚':'al','阿尔及利亚':'dz','安哥拉':'ao','安圭拉':'ai','安提瓜和巴布达':'ag','阿根廷':'ar','亚美尼亚':'am','澳大利亚':'au','奥地利':'at','阿塞拜疆':'az','巴哈马':'bs','巴林':'bh','巴巴多斯':'bb','白俄罗斯':'by','比利时':'be','伯利兹':'bz','贝宁':'bj','百慕大':'bm','不丹':'bt','玻利维亚':'bo','波斯尼亚和黑塞哥维那':'ba','博茨瓦纳':'bw','巴西':'br','英属维尔京群岛':'vg','文莱':'bn','保加利亚':'bg','布基纳法索':'bf','柬埔寨':'kh','喀麦隆':'cm','加拿大':'ca','佛得角':'cv','开曼群岛':'ky','乍得':'td','智利':'cl','哥伦比亚':'co','哥斯达黎加':'cr','克罗地亚':'hr','塞浦路斯':'cy','捷克':'cz','科特迪瓦':'ci','刚果民主共和国':'cd','丹麦':'dk','多米尼克':'dm','多米尼加':'do','厄瓜多尔':'ec','埃及':'eg','萨尔瓦多':'sv','爱沙尼亚':'ee','史瓦帝尼':'sz','斐济':'fj','芬兰':'fi','法国':'fr','加蓬':'ga','冈比亚':'gm','格鲁地亚':'ge','德国':'de','加纳':'gh','希腊':'gr','格林纳达':'gd','危地马拉':'gt','几内亚比绍':'gw','圭那亚':'gy','洪都拉斯':'hn','香港':'hk','匈牙利':'hu','冰岛':'is','印度':'in','印度尼西亚':'id','伊拉克':'iq','爱尔兰':'ie','以色列':'il','意大利':'it','牙买加':'jm','日本':'jp','约旦':'jo','哈萨克斯坦':'kz','肯尼亚':'ke','韩国':'kr','科索沃':'xk','科威特':'kw','吉尔吉斯斯坦':'kg','老挝':'la','拉脱地亚':'lv','黎巴嫩':'lb','利比里亚':'lr','利比亚':'ly','立陶宛':'lt','卢森堡':'lu','澳门':'mo','马达加斯加':'mg','马拉维':'mw','马来西亚':'my','马尔代夫':'mv','马里':'ml','马耳他':'mt','毛里塔尼亚':'mr','毛里求斯':'mu','墨西哥':'mx','密克罗尼西亚':'fm','摩尔多瓦':'md','蒙古':'mn','黑山':'me','蒙特塞拉特':'ms','摩洛哥':'ma','莫桑比克':'mz','缅甸':'mm','纳米比亚':'na','瑙鲁':'nr','尼泊尔':'np','荷兰':'nl','新西兰':'nz','尼加拉瓜':'ni','尼日尔':'ne','尼日利亚':'ng','北马其顿':'mk','挪威':'no','阿曼':'om','巴基斯坦':'pk','帕劳':'pw','巴拿马':'pa','巴布亚新几内亚':'pg','巴拉圭':'py','秘鲁':'pe','菲律宾':'ph','波兰':'pl','葡萄牙':'pt','卡塔尔':'qa','刚果共和国':'cg','罗马尼亚':'ro','俄罗斯':'ru','卢旺达':'rw','沙特阿拉伯':'sa','塞内加尔':'sn','塞尔维亚':'rs','塞舌尔':'sc','塞拉利昂':'sl','新加坡':'sg','斯洛伐克':'sk','斯洛文尼亚':'si','所罗门群岛':'sb','南非':'za','西班牙':'es','斯里兰卡':'lk','圣基茨和尼维斯':'kn','圣卢西亚':'lc','圣文森特和格林纳丁斯':'vc','苏里南':'sr','瑞典':'se','瑞士':'ch','圣多美和普林西比':'st','台湾':'tw','塔吉克斯坦':'tj','坦桑尼亚':'tz','泰国':'th','汤加':'to','特立尼达和多巴哥':'tt','突尼斯':'tn','土库曼斯坦':'tm','特克斯和凯科斯群岛':'tc','土耳其':'tr','阿联酋':'ae','乌干达':'ug','乌克兰':'ua','英国':'gb','美国':'us','乌拉圭':'uy','乌兹别克斯坦':'uz','瓦努阿图':'vu','委内瑞拉':'ve','越南':'vn','也门':'ye','赞比亚':'zm','津巴布韦':'zw' },
+  DSF_MAP: { 'al':143575,'cn':143465,'dz':143563,'ao':143564,'ai':143538,'ag':143540,'ar':143505,'am':143524,'au':143460,'at':143445,'az':143568,'bs':143539,'bh':143559,'bb':143541,'by':143565,'be':143446,'bz':143555,'bj':143576,'bm':143542,'bt':143577,'bo':143556,'bw':143525,'br':143503,'vg':143543,'bn':143560,'bg':143526,'bf':143578,'kh':143579,'ca':143455,'cv':143580,'ky':143544,'td':143581,'cl':143483,'co':143501,'cr':143495,'hr':143494,'cy':143557,'cz':143489,'dk':143458,'dm':143545,'do':143508,'ec':143509,'eg':143516,'sv':143506,'ee':143518,'sz':143602,'fj':143583,'fi':143447,'fr':143442,'gm':143584,'de':143443,'gh':143573,'gr':143448,'gd':143546,'gt':143504,'gw':143585,'gy':143553,'hn':143510,'hk':143463,'hu':143482,'is':143558,'in':143467,'id':143476,'ie':143449,'il':143491,'it':143450,'jm':143511,'jp':143462,'jo':143528,'kz':143517,'ke':143529,'kr':143466,'kw':143493,'kg':143586,'la':143587,'lv':143519,'lb':143497,'lr':143588,'lt':143520,'lu':143551,'mo':143515,'mg':143531,'mw':143589,'my':143473,'ml':143532,'mt':143521,'mr':143590,'mu':143533,'mx':143468,'fm':143591,'md':143523,'mn':143592,'ms':143547,'mz':143593,'na':143594,'np':143484,'nl':143452,'nz':143461,'ni':143512,'ne':143534,'ng':143561,'mk':143530,'no':143457,'om':143562,'pk':143477,'pw':143595,'pa':143485,'pg':143597,'py':143513,'pe':143507,'ph':143474,'pl':143478,'pt':143453,'qa':143498,'cg':143582,'ro':143487,'ru':143469,'sa':143479,'sn':143535,'sc':143599,'sl':143600,'sg':143464,'sk':143496,'si':143499,'sb':143601,'za':143472,'es':143454,'lk':143486,'kn':143548,'lc':143549,'vc':143550,'sr':143554,'se':143456,'ch':143459,'st':143598,'tw':143470,'tj':143603,'tz':143572,'th':143475,'tt':143551,'tn':143536,'tm':143604,'tc':143552,'tr':143480,'ae':143481,'ug':143537,'ua':143492,'gb':143444,'us':143441,'uy':143514,'uz':143566,'ve':143502,'vn':143471,'ye':143571,'zw':143605 },
+  BLOCKED_APP_IDS: new Set([
+      '932747118',
+      '1443988620',
+      '1596063349',
+      '1373567447',
+      '1442620678'
+  ])
+};
 
-const WECHAT_TOKEN = process.env.WECHAT_TOKEN;
+const TARGET_COUNTRIES_FOR_AVAILABILITY = [
+  { code: 'us', name: '美国' }, { code: 'hk', name: '香港' }, { code: 'mo', name: '澳门' },
+  { code: 'tw', name: '台湾' }, { code: 'jp', name: '日本' }, { code: 'kr', name: '韩国' },
+  { code: 'gb', name: '英国' }, { code: 'ca', name: '加拿大' }, { code: 'au', name: '澳大利亚' },
+  { code: 'sg', name: '新加坡' }, { code: 'tr', name: '土耳其' }, { code: 'ng', name: '尼日利亚' }
+];
 
 const parser = new Parser({ explicitArray: false, trim: true });
 const builder = new Builder({ cdata: true, rootName: 'xml', headless: true });
 
 const HTTP = axios.create({
-  timeout: 4000, 
+  timeout: 6000,
   headers: { 'user-agent': 'Mozilla/5.0 (Serverless-WeChatBot)' }
 });
 
@@ -28,7 +42,7 @@ module.exports = async (req, res) => {
 function handleVerification(req, res) {
   try {
     const { signature, timestamp, nonce, echostr } = req.query;
-    const params = [WECHAT_TOKEN || '', timestamp, nonce].sort();
+    const params = [CONFIG.WECHAT_TOKEN || '', timestamp, nonce].sort();
     const hash = crypto.createHash('sha1').update(params.join('')).digest('hex');
     if (hash === signature) return res.status(200).send(echostr);
   } catch {}
@@ -47,26 +61,24 @@ async function handlePostRequest(req, res) {
       replyContent =
         `恭喜！你发现了果粉秘密基地\n\n` +
         `› <a href="weixin://bizmsgmenu?msgmenucontent=付款方式&msgmenuid=付款方式">付款方式</a>\n获取注册地址信息\n\n` +
-        `› <a href="weixin://bizmsgmenu?msgmenucontent=查询TikTok&msgmenuid=1">查询TikTok</a>\n热门地区上架查询\n\n` +
-        `› <a href="weixin://bizmsgmenu?msgmenucontent=榜单美国&msgmenuid=3">榜单美国</a>\n全球免费付费榜单\n\n` +
-        `› <a href="weixin://bizmsgmenu?msgmenucontent=价格YouTube&msgmenuid=2">价格YouTube</a>\n应用价格优惠查询\n\n` +
-        `› <a href="weixin://bizmsgmenu?msgmenucontent=切换美国&msgmenuid=4">切换美国</a>\n应用商店随意切换\n\n` +
-        `› <a href="weixin://bizmsgmenu?msgmenucontent=图标QQ&msgmenuid=5">图标QQ</a>\n获取官方高清图标\n\n更多服务请戳底部菜单栏了解`;
+        `› <a href="weixin://bizmsgmenu?msgmenucontent=查询TikTok&msgmenuid=1">查询TikTok</a>\n全区应用上架查询\n\n` +
+        `› <a href="weixin://bizmsgmenu?msgmenucontent=榜单美国&msgmenuid=3">榜单美国</a>\n获取免费付费榜单\n\n` +
+        `› <a href="weixin://bizmsgmenu?msgmenucontent=价格YouTube&msgmenuid=2">价格YouTube</a>\n查询不同应用价格\n\n` +
+        `› <a href="weixin://bizmsgmenu?msgmenucontent=切换美国&msgmenuid=4">切换美国</a>\n切换不同商店地区\n\n` +
+        `› <a href="weixin://bizmsgmenu?msgmenucontent=图标QQ&msgmenuid=5">图标QQ</a>\n获取高清应用图标\n\n更多服务请戳底部菜单栏了解`;
     } else if (message.MsgType === 'text' && typeof message.Content === 'string') {
       const content = message.Content.trim();
       
-      const chartV2Match = content.match(/^榜单\s*(.+)$/i); 
-      const chartMatch = content.match(/^(.*?)(免费榜|付费榜)$/); 
-      const priceMatchAdvanced = content.match(/^价格\s*(.+?)\s+([a-zA-Z\u4e00-\u9fa5]+)$/i); 
-      const priceMatchSimple = content.match(/^价格\s*(.+)$/i); 
-      const switchRegionMatch = content.match(/^(切换|地区)\s*([a-zA-Z\u4e00-\u9fa5]+)$/i); 
-      const availabilityMatch = content.match(/^查询\s*(.+)$/i); 
-      const osAllMatch = /^系统更新$/i.test(content);
-      
-      // 【修改 1】OS指令正则更新：直接匹配 iOS, iPadOS 等单词，不区分大小写，不需要"更新"前缀
-      const osUpdateMatch = content.match(/^(iOS|iPadOS|macOS|watchOS|tvOS|visionOS)$/i); 
-      
-      const iconMatch = content.match(/^图标\s*(.+)$/i); 
+      // 【优化 v9.0】修改 \s+ (一个或多个空格) 为 \s* (零个或多个空格)
+      const chartV2Match = content.match(/^榜单\s*(.+)$/i); // \s+ -> \s*
+      const chartMatch = content.match(/^(.*?)(免费榜|付费榜)$/); // 此处逻辑不变，(.*?)已能处理空格
+      const priceMatchAdvanced = content.match(/^价格\s*(.+?)\s+([a-zA-Z\u4e00-\u9fa5]+)$/i); // 第一个 \s+ -> \s*
+      const priceMatchSimple = content.match(/^价格\s*(.+)$/i); // \s+ -> \s*
+      const switchRegionMatch = content.match(/^(切换|地区)\s*([a-zA-Z\u4e00-\u9fa5]+)$/i); // \s+ -> \s*
+      const availabilityMatch = content.match(/^查询\s*(.+)$/i); // \s+ -> \s*
+      const osAllMatch = /^系统更新$/i.test(content); // 保持不变
+      const osUpdateMatch = content.match(/^更新\s*(iOS|iPadOS|macOS|watchOS|tvOS|visionOS)?$/i); // 保持不变 (已是 s*)
+      const iconMatch = content.match(/^图标\s*(.+)$/i); // 【优化 v9.0】新增图标指令的正则匹配
 
       if (chartV2Match && isSupportedRegion(chartV2Match[1])) {
         replyContent = await handleChartQuery(chartV2Match[1].trim(), '免费榜');
@@ -75,30 +87,17 @@ async function handlePostRequest(req, res) {
       } else if (priceMatchAdvanced && isSupportedRegion(priceMatchAdvanced[2])) {
         replyContent = await handlePriceQuery(priceMatchAdvanced[1].trim(), priceMatchAdvanced[2].trim(), false);
       } else if (priceMatchSimple) {
-        // 智能无空格匹配逻辑
-        let queryAppName = priceMatchSimple[1].trim();
-        let targetRegion = '美国';
-        let isDefaultSearch = true;
-        for (const countryName in ALL_SUPPORTED_REGIONS) {
-          if (queryAppName.endsWith(countryName) && queryAppName.length > countryName.length) {
-            targetRegion = countryName;
-            queryAppName = queryAppName.slice(0, -countryName.length).trim();
-            isDefaultSearch = false; 
-            break; 
-          }
-        }
-        replyContent = await handlePriceQuery(queryAppName, targetRegion, isDefaultSearch);
-
+        replyContent = await handlePriceQuery(priceMatchSimple[1].trim(), '美国', true);
       } else if (osAllMatch) {
         replyContent = await handleSimpleAllOsUpdates();
       } else if (osUpdateMatch) {
-        // 【修改 2】直接获取捕获到的系统名 (例如 "ios")
-        const platform = osUpdateMatch[1].trim();
+        const platform = (osUpdateMatch[1] || 'iOS').trim();
         replyContent = await handleDetailedOsUpdate(platform);
       } else if (switchRegionMatch && isSupportedRegion(switchRegionMatch[2])) {
         replyContent = handleRegionSwitch(switchRegionMatch[2].trim());
       } else if (availabilityMatch) {
         replyContent = await handleAvailabilityQuery(availabilityMatch[1].trim());
+      // 【优化 v9.0】将图标查询从 startsWith 改为正则匹配
       } else if (iconMatch) { 
         const appName = iconMatch[1].trim();
         if (appName) replyContent = await lookupAppIcon(appName);
@@ -127,10 +126,10 @@ function getRawBody(req) {
 function getCountryCode(identifier) {
   const trimmed = String(identifier || '').trim();
   const key = trimmed.toLowerCase();
-  if (ALL_SUPPORTED_REGIONS[trimmed]) return ALL_SUPPORTED_REGIONS[trimmed];
+  if (CONFIG.ALL_SUPPORTED_REGIONS[trimmed]) return CONFIG.ALL_SUPPORTED_REGIONS[trimmed];
   if (/^[a-z]{2}$/i.test(key)) {
-    for (const name in ALL_SUPPORTED_REGIONS) {
-      if (ALL_SUPPORTED_REGIONS[name] === key) return key;
+    for (const name in CONFIG.ALL_SUPPORTED_REGIONS) {
+      if (CONFIG.ALL_SUPPORTED_REGIONS[name] === key) return key;
     }
   }
   return '';
@@ -176,34 +175,25 @@ async function getJSON(url, { timeout = 6000, retries = 1 } = {}) {
   throw lastErr;
 }
 
-// 榜单查询 (旧版接口)
 async function handleChartQuery(regionName, chartType) {
   const regionCode = getCountryCode(regionName);
   if (!regionCode) return '不支持的地区或格式错误。';
 
-  const typePath = chartType === '免费榜' ? 'topfreeapplications' : 'toppaidapplications';
-  const url = `https://itunes.apple.com/${regionCode}/rss/${typePath}/limit=10/json`;
+  const type = chartType === '免费榜' ? 'top-free' : 'top-paid';
+  const url = `https://rss.marketingtools.apple.com/api/v2/${regionCode}/apps/${type}/10/apps.json`;
 
   try {
     const data = await getJSON(url);
-    const apps = (data && data.feed && data.feed.entry) || [];
-    
-    if (!apps.length) return '获取榜单失败，可能 Apple 接口暂时繁忙。';
+    const apps = (data && data.feed && data.feed.results) || [];
+    if (!apps.length) return '获取榜单失败，请稍后再试。';
 
     let resultText = `${regionName}${chartType}\n${getFormattedTime()}\n\n`;
 
     resultText += apps.map((app, idx) => {
-      const appId = app.id && app.id.attributes ? app.id.attributes['im:id'] : '';
-      const appName = (app['im:name'] && app['im:name'].label) || '未知应用';
-      
-      let appUrl = '';
-      if (Array.isArray(app.link) && app.link.length > 0) {
-          appUrl = app.link[0].attributes.href;
-      } else if (app.link && app.link.attributes) {
-          appUrl = app.link.attributes.href;
-      }
-
-      if (BLOCKED_APP_IDS.has(appId)) return `${idx + 1}、${appName}`;
+      const appId = String(app.id || '');
+      const appName = app.name || '未知应用';
+      const appUrl = app.url;
+      if (CONFIG.BLOCKED_APP_IDS.has(appId)) return `${idx + 1}、${appName}`;
       return appUrl ? `${idx + 1}、<a href="${appUrl}">${appName}</a>` : `${idx + 1}、${appName}`;
     }).join('\n');
 
@@ -212,7 +202,7 @@ async function handleChartQuery(regionName, chartType) {
     resultText += `\n\n${SOURCE_NOTE}`;
     return resultText;
   } catch (e) {
-    console.error('Chart Query Error:', e.message || e);
+    console.error('Error in handleChartQuery:', e.message || e);
     return '获取榜单失败，请稍后再试。';
   }
 }
@@ -235,21 +225,6 @@ function formatPrice(r) {
   return '未知';
 }
 
-// 汇率查询 (Frankfurter V3.0)
-async function fetchExchangeRate(targetCurrencyCode) {
-  if (!targetCurrencyCode || targetCurrencyCode.toUpperCase() === 'CNY') return null;
-  try {
-    const url = `https://api.frankfurter.app/latest?from=${targetCurrencyCode.toUpperCase()}&to=CNY`;
-    const { data } = await axios.get(url, { timeout: 3000 });
-    if (data && data.rates && data.rates.CNY) {
-      return data.rates.CNY;
-    }
-  } catch (e) {
-    console.error(`Exchange Rate Error (${targetCurrencyCode}):`, e.message);
-  }
-  return null;
-}
-
 async function handlePriceQuery(appName, regionName, isDefaultSearch) {
   const code = getCountryCode(regionName);
   if (!code) return `不支持的地区或格式错误：${regionName}`;
@@ -264,30 +239,17 @@ async function handlePriceQuery(appName, regionName, isDefaultSearch) {
     const link = `<a href="${best.trackViewUrl}">${best.trackName}</a>`;
     const priceText = formatPrice(best);
 
-    let replyText = `您搜索的“${appName}”最匹配的结果是：\n\n${link}\n\n地区：${regionName}\n价格：${priceText}`;
-
-    if (typeof best.price === 'number' && best.price > 0 && best.currency) {
-      const rate = await fetchExchangeRate(best.currency);
-      if (rate) {
-        const cnyPrice = (best.price * rate).toFixed(2);
-        replyText += ` (≈ ¥${cnyPrice})`;
-      }
-    }
-
-    replyText += `\n时间：${getFormattedTime()}`;
-    // 【修改 3】去掉建议指令中的空格
-    if (isDefaultSearch) replyText += `\n\n想查其他地区？试试发送：\n价格${appName}日本`;
-    
+    let replyText = `您搜索的“${appName}”最匹配的结果是：\n\n${link}\n\n地区：${regionName}\n价格：${priceText}\n时间：${getFormattedTime()}`;
+    if (isDefaultSearch) replyText += `\n\n想查其他地区？试试发送：\n价格 ${appName} 日本`;
     return replyText + `\n\n${SOURCE_NOTE}`;
-  } catch (e) {
-    console.error('Price Query Error:', e);
+  } catch {
     return '查询价格失败，请稍后再试。';
   }
 }
 
 function handleRegionSwitch(regionName) {
   const regionCode = getCountryCode(regionName);
-  const dsf = DSF_MAP[regionCode];
+  const dsf = CONFIG.DSF_MAP[regionCode];
   if (!regionCode || !dsf) return '不支持的地区或格式错误。';
 
   const stableAppId = '375380948';
@@ -295,10 +257,10 @@ function handleRegionSwitch(regionName) {
   const fullUrl = `https://itunes.apple.com/WebObjects/MZStore.woa/wa/resetAndRedirect?dsf=${dsf}&cc=${regionCode}&url=${encodeURIComponent(redirect)}`;
 
   const cnCode = 'cn';
-  const cnDsf = DSF_MAP[cnCode];
+  const cnDsf = CONFIG.DSF_MAP[cnCode];
   const cnUrl = `https://itunes.apple.com/WebObjects/MZStore.woa/wa/resetAndRedirect?dsf=${cnDsf}&cc=${cnCode}&url=${encodeURIComponent(redirect)}`;
 
-  return `注意！仅浏览，需账号才能下载。\n\n<a href="${fullUrl}">› 点击切换至【${regionName}】 App Store</a>\n\n› 点此切换至 <a href="${cnUrl}">【大陆】</a> App Store\n\n*出现“无法连接”后将自动跳转*\n\n*目前不支持 iOS 26 及以上系统*`;
+  return `注意！仅浏览，需账号才能下载。\n\n<a href="${fullUrl}">› 点击切换至【${regionName}】 App Store</a>\n\n› 点此切换至 <a href="${cnUrl}">【大陆】</a> App Store\n\n*出现“无法连接”后将自动跳转*`;
 }
 
 async function handleAvailabilityQuery(appName) {
@@ -369,17 +331,15 @@ async function lookupAppIcon(appName) {
     return '查询应用图标失败，请稍后再试。';
   }
 }
-
 async function fetchGdmf() {
   const url = 'https://gdmf.apple.com/v2/pmv';
   const headers = {
-    // 【修改】只更新了这里的 User-Agent
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
     'Accept': 'application/json, text/plain, */*'
   };
   const agent = new https.Agent({ rejectUnauthorized: false });
   try {
-    const response = await HTTP.get(url, { timeout: 4000, headers: headers, httpsAgent: agent });
+    const response = await HTTP.get(url, { timeout: 15000, headers: headers, httpsAgent: agent });
     if (!response.data || typeof response.data !== 'object') {
         console.error('fetchGdmf Error: Received invalid data format from GDMF.');
         throw new Error('Received invalid data format from GDMF.');
@@ -420,7 +380,6 @@ function toBeijingYMD(s) {
   return `${y}-${m}-${d2}`;
 }
 
-// 【修改 4】系统更新概览：链接优化 (去掉"更新"和"详情"文字，变成两列蓝色可点击)
 async function handleSimpleAllOsUpdates() {
   try {
     const data = await fetchGdmf();
@@ -434,17 +393,7 @@ async function handleSimpleAllOsUpdates() {
       }
     }
     if (!results.length) return '暂未获取到系统版本信息，请稍后再试。';
-
-    let replyText = `最新系统版本：\n\n${results.join('\n')}\n\n查看详情：\n`;
-    
-    // 生成蓝色点击链接: 微信协议 <a href="weixin://bizmsgmenu?msgmenucontent=关键词&msgmenuid=ID">显示文字</a>
-    // 排版：使用空格模拟两列布局
-    replyText += `› <a href="weixin://bizmsgmenu?msgmenucontent=iOS&msgmenuid=iOS">iOS</a>      › <a href="weixin://bizmsgmenu?msgmenucontent=iPadOS&msgmenuid=iPadOS">iPadOS</a>\n`;
-    replyText += `› <a href="weixin://bizmsgmenu?msgmenucontent=macOS&msgmenuid=macOS">macOS</a>    › <a href="weixin://bizmsgmenu?msgmenucontent=watchOS&msgmenuid=watchOS">watchOS</a>\n`;
-    replyText += `› <a href="weixin://bizmsgmenu?msgmenucontent=tvOS&msgmenuid=tvOS">tvOS</a>     › <a href="weixin://bizmsgmenu?msgmenucontent=visionOS&msgmenuid=visionOS">visionOS</a>\n`;
-    replyText += `\n${SOURCE_NOTE}`;
-
-    return replyText;
+    return `最新系统版本：\n\n${results.join('\n')}\n\n如需查看详细版本，请发送：\n更新 iOS、更新 macOS、更新 watchOS...\n\n*数据来源 Apple 官方*`;
   } catch (e) {
     console.error('Error in handleSimpleAllOsUpdates:', e.message || e);
     return '查询系统版本失败，请稍后再试。';
@@ -557,3 +506,4 @@ function determinePlatformsFromDevices(devices) {
 
     return platforms;
 }
+
