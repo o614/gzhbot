@@ -2,7 +2,8 @@
 const crypto = require('crypto');
 const { Parser, Builder } = require('xml2js');
 const { ALL_SUPPORTED_REGIONS } = require('./consts');
-const { isSupportedRegion, checkAbuseGate, checkSubscribeFirstTime } = require('./utils');
+// 【修复】引入 checkSubscribeFirstTime
+const { isSupportedRegion, checkUserRateLimit, checkSubscribeFirstTime } = require('./utils');
 const Handlers = require('./handlers');
 
 const WECHAT_TOKEN = process.env.WECHAT_TOKEN;
@@ -86,7 +87,7 @@ const FEATURES = [
     }
   },
   {
-    name: 'AppDetails', // 应用详情 (替换了 Availability)
+    name: 'AppDetails',
     match: (c) => c.match(/^查询\s*(.+)$/i),
     needAuth: true,
     handler: async (match) => Handlers.handleAppDetails(match[1].trim())
@@ -127,7 +128,7 @@ module.exports = async (req, res) => {
   if (req.method === 'GET') return handleVerification(req, res);
   
   if (req.method === 'POST') {
-    // 【加回】4.5秒超时熔断
+    // 4.5秒超时熔断
     const task = handlePostRequest(req, res);
     const timeout = new Promise(resolve => setTimeout(() => resolve('TIMEOUT'), 4500));
 
@@ -168,9 +169,9 @@ async function handlePostRequest(req, res) {
         const match = feature.match(content);
         if (match) {
           if (feature.needAuth) {
-            const gate = await checkAbuseGate(openId);
-            if (!gate.allowed) {
-              replyContent = gate.message;
+            const gate = await checkUserRateLimit(openId);
+            if (!gate) {
+              replyContent = '您今天的查询次数已达上限，请明天再来吧！';
               break;
             }
           }
