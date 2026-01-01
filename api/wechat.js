@@ -1,7 +1,7 @@
 // api/wechat.js
 const crypto = require('crypto');
 const { Parser, Builder } = require('xml2js');
-const { isSupportedRegion } = require('./utils');
+const { isSupportedRegion, checkUserRateLimit } = require('./utils');
 const { ALL_SUPPORTED_REGIONS } = require('./consts');
 const Handlers = require('./handlers');
 
@@ -12,7 +12,27 @@ const builder = new Builder({ cdata: true, rootName: 'xml', headless: true });
 
 module.exports = async (req, res) => {
   if (req.method === 'GET') return handleVerification(req, res);
-  if (req.method === 'POST') return handlePostRequest(req, res);
+  
+  if (req.method === 'POST') {
+    // 【优化1】5秒超时熔断机制 (Circuit Breaker)
+    // 微信要求5秒内响应，我们设为4.5秒，超时直接返回空，防止重试
+    const task = handlePostRequest(req, res);
+    const timeout = new Promise(resolve => setTimeout(() => resolve('TIMEOUT'), 4500));
+
+    try {
+      const result = await Promise.race([task, timeout]);
+      if (result === 'TIMEOUT') {
+        console.warn('Processing timed out, returning empty response to prevent retry.');
+        // 超时了，直接发个空包给微信，结束请求
+        return res.status(200).send(''); 
+      }
+      return result; // 正常返回 task 的结果
+    } catch (e) {
+      console.error('Main Handler Error:', e);
+      return res.status(200).send('');
+    }
+  }
+  
   res.status(200).send('');
 };
 
@@ -29,11 +49,14 @@ function handleVerification(req, res) {
 async function handlePostRequest(req, res) {
   let replyContent = '';
   let message = {};
+  
   try {
     const rawBody = await getRawBody(req);
     const parsedXml = await parser.parseStringPromise(rawBody);
     message = parsedXml.xml || {};
+    const fromUser = message.FromUserName;
 
+    // 关注事件
     if (message.MsgType === 'event' && message.Event === 'subscribe') {
       replyContent =
         `恭喜！你发现了果粉秘密基地\n\n` +
@@ -43,10 +66,22 @@ async function handlePostRequest(req, res) {
         `› <a href="weixin://bizmsgmenu?msgmenucontent=价格YouTube&msgmenuid=2">价格YouTube</a>\n应用价格优惠查询\n\n` +
         `› <a href="weixin://bizmsgmenu?msgmenucontent=切换美国&msgmenuid=4">切换美国</a>\n应用商店随意切换\n\n` +
         `› <a href="weixin://bizmsgmenu?msgmenucontent=图标QQ&msgmenuid=5">图标QQ</a>\n获取官方高清图标\n\n更多服务请戳底部菜单栏了解`;
+    
+    // 文本消息处理
     } else if (message.MsgType === 'text' && typeof message.Content === 'string') {
       const content = message.Content.trim();
-      
-      const chartMatch = content.match(/^(.*?)(免费榜|付费榜)$/); 
+
+      // 【优化3】用户限流检查 (Rate Limiting)
+      const isAllowed = await checkUserRateLimit(fromUser);
+      if (!isAllowed) {
+        replyContent = '您今天的查询次数已达上限，请明天再来吧！';
+        // 直接返回限流提示
+        const xml = buildTextReply(message.FromUserName, message.ToUserName, replyContent);
+        return res.setHeader('Content-Type', 'application/xml').status(200).send(xml);
+      }
+
+      // 正则匹配
+      const chartMatch = content.match(/^\s*(.*?)\s*(免费榜|付费榜)\s*$/); // 宽容正则
       const chartV2Match = content.match(/^榜单\s*(.+)$/i); 
       
       const priceMatchAdvanced = content.match(/^价格\s*(.+?)\s+([a-zA-Z\u4e00-\u9fa5]+)$/i); 
@@ -58,12 +93,11 @@ async function handlePostRequest(req, res) {
       const osUpdateMatch = content.match(/^(iOS|iPadOS|macOS|watchOS|tvOS|visionOS)$/i); 
       
       const iconMatch = content.match(/^图标\s*(.+)$/i); 
-      
-      // 修改点：强制必须以“查询”开头，不再匹配所有文本
       const detailMatch = content.match(/^查询\s*(.+)$/i); 
-      
-      // 修改点：处理菜单点击的固定关键词
       const isAppQueryMenu = content === '应用查询';
+      
+      // 【新增】管理员指令
+      const adminMatch = content === '管理后台' || content === '后台数据';
 
       // 1. 榜单
       if (chartV2Match && isSupportedRegion(chartV2Match[1])) {
@@ -102,13 +136,15 @@ async function handlePostRequest(req, res) {
       } else if (iconMatch) {
         replyContent = await Handlers.lookupAppIcon(iconMatch[1].trim());
 
-      // 6. 详情 (修改后：仅在匹配到格式或点击菜单时触发)
+      // 6. 详情
       } else if (isAppQueryMenu) {
-        // 用户点击了菜单，提示正确的格式
         replyContent = '请回复“查询+应用名称”，例如：\n\n查询微信\n查询TikTok\n查询小红书';
       } else if (detailMatch) {
-        // 用户回复了“查询 xxx”，执行查询
         replyContent = await Handlers.handleAppDetails(detailMatch[1].trim());
+
+      // 7. 管理后台
+      } else if (adminMatch) {
+        replyContent = await Handlers.handleAdminStatus(fromUser);
       }
     }
   } catch (error) {
