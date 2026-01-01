@@ -1,9 +1,9 @@
 // api/utils.js
 const axios = require('axios');
 const https = require('https');
-const { ALL_SUPPORTED_REGIONS } = require('./consts');
+const { ALL_SUPPORTED_REGIONS, ADMIN_OPENID, DAILY_REQUEST_LIMIT } = require('./consts');
 
-// 数据库连接 (Fail-open: 连不上也不报错)
+// 数据库连接 (Fail-open)
 let kv = null;
 try {
   ({ kv } = require('@vercel/kv'));
@@ -18,7 +18,7 @@ const HTTP = axios.create({
   headers: { 'user-agent': 'Mozilla/5.0 (Serverless-WeChatBot)' }
 });
 
-// 获取地区代码
+// 获取地区代码 (保留原逻辑，支持输入 jp 返回 jp)
 function getCountryCode(identifier) {
   const trimmed = String(identifier || '').trim();
   const key = trimmed.toLowerCase();
@@ -35,7 +35,18 @@ function isSupportedRegion(identifier) {
   return !!getCountryCode(identifier);
 }
 
-// 时间格式化
+// 时间格式化 YY/MM/DD
+function toBeijingShortDate(s) {
+  const d = s ? new Date(s) : new Date();
+  if (isNaN(d.getTime())) return '';
+  const bj = new Date(d.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
+  const y = String(bj.getFullYear()).slice(-2);
+  const m = String(bj.getMonth() + 1).padStart(2, '0');
+  const d2 = String(bj.getDate()).padStart(2, '0');
+  return `${y}/${m}/${d2}`;
+}
+
+// 兼容旧的完整时间格式
 function getFormattedTime() {
   const now = new Date();
   const bj = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
@@ -60,6 +71,16 @@ async function getJSON(url, { timeout = 6000, retries = 1 } = {}) {
     }
   }
   throw lastErr;
+}
+
+// 【加回】检测链接有效性 (HEAD)
+async function checkUrlAccessibility(url) {
+  try {
+    await HTTP.head(url, { timeout: 1500 });
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 // 价格处理
@@ -98,10 +119,7 @@ async function fetchExchangeRate(targetCurrencyCode) {
 // 系统更新相关
 async function fetchGdmf() {
   const url = 'https://gdmf.apple.com/v2/pmv';
-  const headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'application/json, text/plain, */*'
-  };
+  const headers = { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' };
   const agent = new https.Agent({ rejectUnauthorized: false });
   try {
     const response = await HTTP.get(url, { timeout: 15000, headers, httpsAgent: agent });
@@ -124,14 +142,7 @@ function normalizePlatform(p) {
 }
 
 function toBeijingYMD(s) {
-  if (!s) return '';
-  const d = new Date(s);
-  if (isNaN(d)) return '';
-  const bj = new Date(d.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
-  const y = bj.getFullYear();
-  const m = String(bj.getMonth() + 1).padStart(2, '0');
-  const d2 = String(bj.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d2}`;
+  return toBeijingShortDate(s); // 复用短日期格式
 }
 
 function collectReleases(data, platform) {
@@ -178,27 +189,19 @@ function collectReleases(data, platform) {
 function determinePlatformsFromDevices(devices) {
   const platforms = new Set();
   if (!Array.isArray(devices)) return platforms;
-  let hasIOS = false, hasIPadOS = false, hasWatchOS = false;
-  let hasTVOS = false, hasMacOS = false, hasVisionOS = false;
   for (const device of devices) {
     const d = String(device || '').toLowerCase();
-    if (d.startsWith('iphone') || d.startsWith('ipod')) hasIOS = true;
-    else if (d.startsWith('ipad')) hasIPadOS = true;
-    else if (d.startsWith('watch')) hasWatchOS = true;
-    else if (d.startsWith('appletv') || d.startsWith('audioaccessory')) hasTVOS = true;
-    else if (d.startsWith('j') || d.startsWith('mac-') || d.includes('macos') || d.startsWith('vmm') || d.startsWith('x86') || /^[A-Z]\d{3}[A-Z]{2}AP$/i.test(device)) hasMacOS = true;
-    else if (d.startsWith('realitydevice')) hasVisionOS = true;
+    if (d.startsWith('iphone') || d.startsWith('ipod')) platforms.add('iOS');
+    else if (d.startsWith('ipad')) platforms.add('iPadOS');
+    else if (d.startsWith('watch')) platforms.add('watchOS');
+    else if (d.startsWith('appletv')) platforms.add('tvOS');
+    else if (d.includes('mac')) platforms.add('macOS');
+    else if (d.startsWith('realitydevice')) platforms.add('visionOS');
   }
-  if (hasIOS) platforms.add('iOS');
-  if (hasIPadOS) platforms.add('iPadOS');
-  if (hasWatchOS) platforms.add('watchOS');
-  if (hasTVOS) platforms.add('tvOS');
-  if (hasMacOS) platforms.add('macOS');
-  if (hasVisionOS) platforms.add('visionOS');
   return platforms;
 }
 
-// 🛡️ 核心：限额与VIP检查
+// 🛡️ 限额与VIP检查
 function getBuckets() {
   const now = new Date();
   const bj = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
@@ -209,9 +212,12 @@ function getBuckets() {
 
 async function checkAbuseGate(openId) {
   const perMinute = Number(process.env.RATE_LIMIT_PER_MINUTE || 10);
-  const perDay = Number(process.env.DAILY_LIMIT_GLOBAL || 30);
+  const perDay = Number(DAILY_REQUEST_LIMIT || 30);
   if (!openId) return { allowed: true };
   if (!kv) return { allowed: true };
+
+  // 管理员跳过
+  if (openId === ADMIN_OPENID) return { allowed: true };
 
   try {
     const isVip = await kv.get(`vip:${openId}`);
@@ -234,7 +240,7 @@ async function checkAbuseGate(openId) {
     }
     return { allowed: true };
   } catch (e) {
-    return { allowed: true }; // 数据库报错则放行
+    return { allowed: true };
   }
 }
 
@@ -255,5 +261,6 @@ async function checkSubscribeFirstTime(openId) {
 module.exports = {
   HTTP, SOURCE_NOTE, getCountryCode, isSupportedRegion, getFormattedTime, getJSON,
   pickBestMatch, formatPrice, fetchExchangeRate, fetchGdmf, normalizePlatform, toBeijingYMD,
-  collectReleases, determinePlatformsFromDevices, checkAbuseGate, checkSubscribeFirstTime
+  collectReleases, determinePlatformsFromDevices, checkAbuseGate, checkSubscribeFirstTime,
+  checkUrlAccessibility, toBeijingShortDate
 };
