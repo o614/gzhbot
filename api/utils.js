@@ -5,9 +5,7 @@ const { ALL_SUPPORTED_REGIONS, ADMIN_OPENID, DAILY_REQUEST_LIMIT } = require('./
 
 // 数据库连接 (Fail-open)
 let kv = null;
-try {
-  ({ kv } = require('@vercel/kv'));
-} catch (e) { kv = null; }
+try { ({ kv } = require('@vercel/kv')); } catch (e) { kv = null; }
 
 const SOURCE_NOTE = '*数据来源 Apple 官方*';
 
@@ -51,22 +49,17 @@ async function checkUserRateLimit(openid) {
   } catch (e) { return true; }
 }
 
-// 【新增】检查是否首次关注 (用于欢迎语)
+// 【关键修复】这里必须定义并导出这个函数
 async function checkSubscribeFirstTime(openId) {
-  // 如果没有 KV 或 OpenID，默认当作新用户，不报错
   if (!process.env.KV_REST_API_TOKEN || !kv || !openId) return { isFirst: true };
-  
   const key = `sub:seen:${openId}`;
   try {
     const seen = await kv.get(key);
-    if (seen) return { isFirst: false }; // 以前关注过
-    
-    // 标记为已关注
+    if (seen) return { isFirst: false };
     await kv.set(key, '1');
     return { isFirst: true };
   } catch (e) {
-    console.error('Subscribe Check Error:', e);
-    return { isFirst: true }; // 出错也当新用户，保证流程通畅
+    return { isFirst: true };
   }
 }
 
@@ -82,10 +75,16 @@ function formatBytes(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
+// 【关键修复】恢复为遍历查找模式，以支持 "jp" 输入
+// 因为 consts.js 去掉了自动映射，这里必须遍历 value
 function getCountryCode(identifier) {
   const trimmed = String(identifier || '').trim();
   const key = trimmed.toLowerCase();
+  
+  // 1. 直接查中文
   if (ALL_SUPPORTED_REGIONS[trimmed]) return ALL_SUPPORTED_REGIONS[trimmed];
+  
+  // 2. 查不到中文，如果是2位代码，遍历查找
   if (/^[a-z]{2}$/i.test(key)) {
     for (const name in ALL_SUPPORTED_REGIONS) {
       if (ALL_SUPPORTED_REGIONS[name] === key) return key;
