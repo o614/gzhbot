@@ -12,7 +12,7 @@ try {
 const SOURCE_NOTE = '*数据来源 Apple 官方*';
 
 const HTTP = axios.create({
-  timeout: 8000, // 增加超时时间到 8秒
+  timeout: 8000, 
   headers: { 'user-agent': 'Mozilla/5.0 (Serverless-WeChatBot)' }
 });
 
@@ -49,6 +49,25 @@ async function checkUserRateLimit(openid) {
     if (currentCount === 1) await kv.expire(key, 86400);
     return currentCount <= DAILY_REQUEST_LIMIT;
   } catch (e) { return true; }
+}
+
+// 【新增】检查是否首次关注 (用于欢迎语)
+async function checkSubscribeFirstTime(openId) {
+  // 如果没有 KV 或 OpenID，默认当作新用户，不报错
+  if (!process.env.KV_REST_API_TOKEN || !kv || !openId) return { isFirst: true };
+  
+  const key = `sub:seen:${openId}`;
+  try {
+    const seen = await kv.get(key);
+    if (seen) return { isFirst: false }; // 以前关注过
+    
+    // 标记为已关注
+    await kv.set(key, '1');
+    return { isFirst: true };
+  } catch (e) {
+    console.error('Subscribe Check Error:', e);
+    return { isFirst: true }; // 出错也当新用户，保证流程通畅
+  }
 }
 
 // ----------------------
@@ -219,5 +238,5 @@ module.exports = {
   HTTP, SOURCE_NOTE, withCache, formatBytes, getCountryCode, isSupportedRegion,
   getFormattedTime, getJSON, pickBestMatch, formatPrice, fetchExchangeRate, fetchGdmf,
   normalizePlatform, toBeijingYMD, toBeijingShortDate, collectReleases, 
-  checkUrlAccessibility, checkUserRateLimit
+  checkUrlAccessibility, checkUserRateLimit, checkSubscribeFirstTime 
 };
