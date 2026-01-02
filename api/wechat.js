@@ -1,27 +1,18 @@
 // api/wechat.js
 const crypto = require('crypto');
 const { Parser, Builder } = require('xml2js');
-const { ALL_SUPPORTED_REGIONS } = require('./consts');
+// 【修正】确保这里引入了 ALL_SUPPORTED_REGIONS
+const { ALL_SUPPORTED_REGIONS } = require('./consts'); 
 const { isSupportedRegion, checkUserRateLimit, checkSubscribeFirstTime } = require('./utils');
 const Handlers = require('./handlers');
+const { getWelcomeText, KEYWORD_REPLIES } = require('./replies');
 
 const WECHAT_TOKEN = process.env.WECHAT_TOKEN;
 const parser = new Parser({ explicitArray: false, trim: true });
 const builder = new Builder({ cdata: true, rootName: 'xml', headless: true });
 
-function buildWelcomeText(prefixLine = '') {
-  const base =
-    `恭喜！你发现了果粉秘密基地\n\n` +
-    `› <a href="weixin://bizmsgmenu?msgmenucontent=付款方式&msgmenuid=付款方式">付款方式</a>\n获取注册地址信息\n\n` +
-    `› <a href="weixin://bizmsgmenu?msgmenucontent=应用查询&msgmenuid=1">应用查询</a>\n热门应用详情查询\n\n` +
-    `› <a href="weixin://bizmsgmenu?msgmenucontent=榜单查询&msgmenuid=3">榜单查询</a>\n全球免费付费榜单\n\n` +
-    `› <a href="weixin://bizmsgmenu?msgmenucontent=价格查询&msgmenuid=2">价格查询</a>\n应用价格优惠查询\n\n` +
-    `› <a href="weixin://bizmsgmenu?msgmenucontent=切换美国&msgmenuid=4">切换美国</a>\n应用商店随意切换\n\n` +
-    `› <a href="weixin://bizmsgmenu?msgmenucontent=图标查询&msgmenuid=5">图标查询</a>\n获取官方高清图标\n\n更多服务请戳底部菜单栏了解`;
-  return prefixLine ? `${prefixLine}\n\n${base}` : base;
-}
-
 const FEATURES = [
+  // 1. 管理功能
   {
     name: 'Admin',
     match: (c) => /^管理后台|后台数据$/i.test(c),
@@ -34,13 +25,18 @@ const FEATURES = [
     needAuth: false,
     handler: async (match, openId) => `你的 OpenID：${openId}`
   },
-  // 【新增】榜单查询引导
+
+  // 2. 静态关键词 (读取 replies.js)
   {
-    name: 'ChartQueryMenu',
-    match: (c) => c === '榜单查询',
+    name: 'StaticKeyword',
+    // 只要 content 存在于 KEYWORD_REPLIES 的键中，就匹配成功
+    match: (c) => !!KEYWORD_REPLIES[c], 
     needAuth: false,
-    handler: async () => '请回复“榜单+地区”，例如：\n\n榜单美国\n榜单日本\n榜单香港'
+    // 【关键】这里需要第3个参数 content
+    handler: async (match, openId, content) => KEYWORD_REPLIES[content] 
   },
+
+  // 3. 动态业务功能
   {
     name: 'ChartSimple',
     match: (c) => c.match(/^榜单\s*(.+)$/i),
@@ -59,13 +55,6 @@ const FEATURES = [
       return Handlers.handleChartQuery(match[1].trim(), match[2]);
     }
   },
-  // 【新增】价格查询引导
-  {
-    name: 'PriceQueryMenu',
-    match: (c) => c === '价格查询',
-    needAuth: false,
-    handler: async () => '请回复“价格+应用名称”，例如：\n\n价格 YouTube\n价格 Minecraft\n价格 小红书'
-  },
   {
     name: 'PriceAdvanced',
     match: (c) => c.match(/^价格\s*(.+?)\s+([a-zA-Z\u4e00-\u9fa5]+)$/i),
@@ -83,6 +72,8 @@ const FEATURES = [
       let queryAppName = match[1].trim();
       let targetRegion = '美国';
       let isDefaultSearch = true;
+      
+      // 倒序遍历地区名，解决 "价格 Minecraft 日本" 这种没有空格的情况
       for (const countryName in ALL_SUPPORTED_REGIONS) {
         if (queryAppName.endsWith(countryName) && queryAppName.length > countryName.length) {
           targetRegion = countryName;
@@ -110,12 +101,6 @@ const FEATURES = [
     handler: async (match) => Handlers.handleAppDetails(match[1].trim())
   },
   {
-    name: 'AppQueryMenu',
-    match: (c) => c === '应用查询',
-    needAuth: false,
-    handler: async () => '请回复“查询+应用名称”，例如：\n\n查询微信\n查询TikTok\n查询小红书'
-  },
-  {
     name: 'SystemUpdateAll',
     match: (c) => /^系统更新$/i.test(c),
     needAuth: true,
@@ -127,33 +112,21 @@ const FEATURES = [
     needAuth: true,
     handler: async (match) => Handlers.handleDetailedOsUpdate((match[1] || 'iOS').trim())
   },
-  // 【新增】图标查询引导
-  {
-    name: 'IconQueryMenu',
-    match: (c) => c === '图标查询',
-    needAuth: false,
-    handler: async () => '请回复“图标+应用名称”，例如：\n\n图标 QQ\n图标 微信\n图标 TikTok'
-  },
   {
     name: 'AppIcon',
     match: (c) => c.match(/^图标\s*(.+)$/i),
     needAuth: true,
     handler: async (match) => Handlers.lookupAppIcon(match[1].trim())
-  },
-  {
-    name: 'Payment',
-    match: (c) => c === '付款方式',
-    needAuth: false,
-    handler: async () => null 
   }
 ];
 
+// 主入口
 module.exports = async (req, res) => {
   if (req.method === 'GET') return handleVerification(req, res);
   
   if (req.method === 'POST') {
-    // 4.5秒超时熔断
     const task = handlePostRequest(req, res);
+    // 4.5秒 超时熔断
     const timeout = new Promise(resolve => setTimeout(() => resolve('TIMEOUT'), 4500));
 
     try {
@@ -180,13 +153,13 @@ async function handlePostRequest(req, res) {
     // 1. 关注事件
     if (message.MsgType === 'event' && message.Event === 'subscribe') {
       const { isFirst } = await checkSubscribeFirstTime(openId);
-      replyContent = buildWelcomeText(isFirst ? '' : '欢迎回来！');
+      // 使用 replies.js 的配置
+      replyContent = getWelcomeText(isFirst);
     }
     // 2. 文本消息
     else if (message.MsgType === 'text' && typeof message.Content === 'string') {
       const content = message.Content.trim();
       
-      // 遍历钥匙扣
       for (const feature of FEATURES) {
         const match = feature.match(content);
         if (match) {
@@ -198,7 +171,8 @@ async function handlePostRequest(req, res) {
             }
           }
           try {
-            const result = await feature.handler(match, openId);
+            // 【关键】传入 content 参数，供 StaticKeyword 使用
+            const result = await feature.handler(match, openId, content);
             if (result) { 
                replyContent = result;
                break; 
