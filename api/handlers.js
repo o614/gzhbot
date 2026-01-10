@@ -1,4 +1,7 @@
 // api/handlers.js
+// 【新增】引入 https 模块，用于忽略证书错误
+const https = require('https'); 
+
 const { 
   getCountryCode, getCountryName, getJSON, getFormattedTime, SOURCE_NOTE, 
   pickBestMatch, formatPrice, fetchExchangeRate, 
@@ -14,7 +17,7 @@ try { ({ kv } = require('@vercel/kv')); } catch (e) { kv = null; }
 const CACHE_TTL_SHORT = 600; 
 const CACHE_TTL_LONG = 1800; 
 
-// 1. 榜单查询 (【完美版】AX接口主打 + 新接口备用 + 统一精美格式)
+// 1. 榜单查询 (【最终完美版】忽略SSL错误直连AX接口 + 备用源兜底 + 统一精美格式)
 async function handleChartQuery(regionInput, chartType) {
   const regionCode = getCountryCode(regionInput);
   if (!regionCode) return '不支持的地区或格式错误。';
@@ -22,27 +25,34 @@ async function handleChartQuery(regionInput, chartType) {
   const displayName = getCountryName(regionCode);
   const interactiveName = displayName || regionInput;
 
-  // 【修改】缓存前缀 v10
-  const cacheKey = `v10:chart:${regionCode}:${chartType === '免费榜' ? 'free' : 'paid'}`;
+  // 【修改】缓存前缀 v11
+  const cacheKey = `v11:chart:${regionCode}:${chartType === '免费榜' ? 'free' : 'paid'}`;
 
   return await withCache(cacheKey, CACHE_TTL_SHORT, async () => {
-    // 准备工作
-    let apps = []; // 用于存放最终清洗好的数据
-    let sourceLabel = ''; // 用于标记是否是备用源
+    let apps = []; 
+    let sourceLabel = ''; 
 
     // ------------------------------------------------
-    // 步骤 1: 尝试 AX 动态接口 (首选，数据最稳)
+    // 步骤 1: 尝试 AX 动态接口 (忽略证书错误)
     // ------------------------------------------------
     try {
       const typeOld = chartType === '免费榜' ? 'topfreeapplications' : 'toppaidapplications';
-      // 使用 ax.itunes 动态接口
       const urlOld = `https://ax.itunes.apple.com/WebObjects/MZStoreServices.woa/ws/RSS/${typeOld}/limit=10/json?cc=${regionCode}`;
       
-      const data = await getJSON(urlOld, { timeout: 4000 }); // 4秒超时
+      // 【核心修改】创建一个忽略证书错误的 Agent
+      const insecureAgent = new https.Agent({  
+        rejectUnauthorized: false 
+      });
+
+      // 将 agent 传给 axios
+      const data = await getJSON(urlOld, { 
+        timeout: 4000, 
+        httpsAgent: insecureAgent 
+      }); 
+
       const entries = (data && data.feed && data.feed.entry) || [];
       
       if (entries.length) {
-        // 清洗旧接口数据
         apps = entries.map(e => {
           let u = '';
           if (e.link) {
@@ -58,11 +68,11 @@ async function handleChartQuery(regionInput, chartType) {
       }
     } catch (e) {
       console.error(`AX Interface failed for ${regionCode}:`, e.message);
-      // AX 失败，不立即返回，继续往下走去试备用接口
+      // 失败后不返回，继续尝试备用源
     }
 
     // ------------------------------------------------
-    // 步骤 2: 如果步骤1失败，尝试 MarketingTools (备用)
+    // 步骤 2: MarketingTools (备用)
     // ------------------------------------------------
     if (apps.length === 0) {
       try {
@@ -70,16 +80,15 @@ async function handleChartQuery(regionInput, chartType) {
         const typeNew = chartType === '免费榜' ? 'top-free' : 'top-paid';
         const urlNew = `https://rss.marketingtools.apple.com/api/v2/${regionCode}/apps/${typeNew}/10/apps.json`;
         
-        const dataNew = await getJSON(urlNew, { timeout: 3000 }); // 3秒超时
+        const dataNew = await getJSON(urlNew, { timeout: 3000 });
         const results = (dataNew && dataNew.feed && dataNew.feed.results) || [];
         
         if (results.length) {
-          sourceLabel = ' (备用源)'; // 标记一下
-          // 清洗新接口数据
+          sourceLabel = ' (备用源)'; 
           apps = results.map(r => ({
              id: r.id,
              name: r.name,
-             url: r.url // 新接口直接就有 url 字段
+             url: r.url 
           }));
         }
       } catch (e2) {
@@ -88,7 +97,7 @@ async function handleChartQuery(regionInput, chartType) {
     }
 
     // ------------------------------------------------
-    // 步骤 3: 统一渲染结果 (无论来自哪个源)
+    // 步骤 3: 统一渲染
     // ------------------------------------------------
     if (!apps.length) return '获取榜单失败，Apple 所有接口均无法连接。';
 
@@ -99,7 +108,6 @@ async function handleChartQuery(regionInput, chartType) {
       const appName = app.name || '未知应用';
       
       if (BLOCKED_APP_IDS.has(appId)) return `${idx + 1}、${appName}`;
-      // 只要有 url，就加超链接
       return app.url ? `${idx + 1}、<a href="${app.url}">${appName}</a>` : `${idx + 1}、${appName}`;
     }).join('\n');
 
@@ -111,13 +119,12 @@ async function handleChartQuery(regionInput, chartType) {
   });
 }
 
-// 2. 价格查询 (limit=1 + 强制刷新缓存)
+// 2. 价格查询 (limit=1)
 async function handlePriceQuery(appName, regionName, isDefaultSearch) {
   const code = getCountryCode(regionName);
   if (!code) return `不支持的地区或格式错误：${regionName}`;
 
-  // 【关键修改】缓存前缀 v4
-  const cacheKey = `v4:price:${code}:${appName.toLowerCase().replace(/\s/g, '')}`;
+  const cacheKey = `v11:price:${code}:${appName.toLowerCase().replace(/\s/g, '')}`;
 
   return await withCache(cacheKey, CACHE_TTL_SHORT, async () => {
     const url = `https://itunes.apple.com/search?term=${encodeURIComponent(appName)}&entity=software&country=${code}&limit=1`;
@@ -147,7 +154,7 @@ async function handlePriceQuery(appName, regionName, isDefaultSearch) {
   });
 }
 
-// 3. 商店切换 (保持混合方案)
+// 3. 商店切换
 function handleRegionSwitch(regionName) {
   const regionCode = getCountryCode(regionName);
   const dsf = DSF_MAP[regionCode];
@@ -172,11 +179,10 @@ function handleRegionSwitch(regionName) {
          `中国：\n<a href="weixin://">${cnRawUrl}</a>`;
 }
 
-// 4. 应用详情 (强制刷新缓存)
+// 4. 应用详情
 async function handleAppDetails(appName) {
   const code = 'us';
-  // 【关键修改】缓存前缀 v4
-  const cacheKey = `v4:detail:us:${appName.toLowerCase().replace(/\s/g, '')}`;
+  const cacheKey = `v11:detail:us:${appName.toLowerCase().replace(/\s/g, '')}`;
 
   return await withCache(cacheKey, CACHE_TTL_SHORT, async () => {
     const url = `https://itunes.apple.com/search?term=${encodeURIComponent(appName)}&entity=software&country=${code}&limit=1`;
@@ -207,10 +213,9 @@ async function handleAppDetails(appName) {
   });
 }
 
-// 5. 图标查询 (强制刷新缓存)
+// 5. 图标查询
 async function lookupAppIcon(appName) {
-  // 【关键修改】缓存前缀 v4
-  const cacheKey = `v4:icon:us:${appName.toLowerCase().replace(/\s/g, '')}`;
+  const cacheKey = `v11:icon:us:${appName.toLowerCase().replace(/\s/g, '')}`;
   return await withCache(cacheKey, CACHE_TTL_SHORT, async () => {
     try {
       const url = `https://itunes.apple.com/search?term=${encodeURIComponent(appName)}&country=us&entity=software&limit=1`;
@@ -237,10 +242,9 @@ async function lookupAppIcon(appName) {
   });
 }
 
-// 6. 系统更新 (强制刷新缓存)
+// 6. 系统更新
 async function handleSimpleAllOsUpdates() {
-  // 【关键修改】缓存前缀 v4
-  const cacheKey = `v4:os:simple_all`;
+  const cacheKey = `v11:os:simple_all`;
   return await withCache(cacheKey, CACHE_TTL_LONG, async () => {
     try {
       const data = await fetchGdmf();
@@ -269,8 +273,7 @@ async function handleSimpleAllOsUpdates() {
 
 async function handleDetailedOsUpdate(inputPlatform = 'iOS') {
   const platform = normalizePlatform(inputPlatform) || 'iOS';
-  // 【关键修改】缓存前缀 v4
-  const cacheKey = `v4:os:detail:${platform}`;
+  const cacheKey = `v11:os:detail:${platform}`;
   return await withCache(cacheKey, CACHE_TTL_LONG, async () => {
     try {
       const data = await fetchGdmf();
