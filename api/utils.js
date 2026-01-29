@@ -68,6 +68,19 @@ async function checkSubscribeFirstTime(openId) {
 // 业务工具
 // ----------------------
 
+// 【新增】Bark 推送工具函数
+async function sendBark(title, body) {
+  // 如果没有配置 Key，直接返回，不报错
+  if (!process.env.BARK_KEY) return;
+  try {
+    // 使用原生 axios 发送，不使用带 User-Agent 的 HTTP 实例，避免干扰
+    const url = `https://api.day.app/${process.env.BARK_KEY}/${encodeURIComponent(title)}/${encodeURIComponent(body)}?group=WeChatMonitor`;
+    await axios.get(url, { timeout: 2000 });
+  } catch (e) {
+    console.warn('Bark push failed:', e.message);
+  }
+}
+
 function formatBytes(bytes) {
   if (!bytes || isNaN(bytes) || bytes === 0) return '0 B';
   const k = 1024;
@@ -209,8 +222,8 @@ function collectReleases(data, platform) {
                   foundBuilds.add(build);
                 } else if (targetOS === 'iPadOS' && actualPlatforms.has('iOS')) {
                    if (parseFloat(version) >= 13.0) {
-                      releases.push({ os: targetOS, version, build, date: dateStr, raw: node });
-                      foundBuilds.add(build);
+                     releases.push({ os: targetOS, version, build, date: dateStr, raw: node });
+                     foundBuilds.add(build);
                    }
                 }
               }
@@ -242,20 +255,6 @@ module.exports = {
   HTTP, SOURCE_NOTE, withCache, formatBytes, getCountryCode, getCountryName, isSupportedRegion,
   getFormattedTime, getJSON, pickBestMatch, formatPrice, fetchExchangeRate, fetchGdmf,
   normalizePlatform, toBeijingYMD, toBeijingShortDate, collectReleases, 
-  checkUrlAccessibility, checkUserRateLimit, checkSubscribeFirstTime 
-};
-
-// utils.js 末尾确保有这个
-async function sendBark(title, body) {
-  if (!process.env.BARK_KEY) return;
-  try {
-    const axios = require('axios');
-    const url = `https://api.day.app/${process.env.BARK_KEY}/${encodeURIComponent(title)}/${encodeURIComponent(body)}?group=WeChatMonitor`;
-    await axios.get(url, { timeout: 1000 });
-  } catch (e) { console.log('Bark failed'); }
-}
-
-module.exports = {
-  // ... 其他导出
-  sendBark // 👈 必须导出
+  checkUrlAccessibility, checkUserRateLimit, checkSubscribeFirstTime,
+  sendBark // 👈 已添加导出
 };
