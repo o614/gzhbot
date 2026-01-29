@@ -2,7 +2,8 @@
 const crypto = require('crypto');
 const { Parser, Builder } = require('xml2js');
 const { ALL_SUPPORTED_REGIONS } = require('./consts');
-const { isSupportedRegion, checkUserRateLimit, checkSubscribeFirstTime } = require('./utils');
+// 【修改】在这里引入了 sendBark
+const { isSupportedRegion, checkUserRateLimit, checkSubscribeFirstTime, sendBark } = require('./utils');
 const Handlers = require('./handlers');
 
 const WECHAT_TOKEN = process.env.WECHAT_TOKEN;
@@ -150,7 +151,7 @@ const FEATURES = [
 
 module.exports = async (req, res) => {
   if (req.method === 'GET') return handleVerification(req, res);
-  
+   
   if (req.method === 'POST') {
     // 4.5秒超时熔断
     const task = handlePostRequest(req, res);
@@ -179,13 +180,18 @@ async function handlePostRequest(req, res) {
 
     // 1. 关注事件
     if (message.MsgType === 'event' && message.Event === 'subscribe') {
+      
+      // 👇👇👇【这里新增了 Bark 通知的代码】👇👇👇
+      await sendBark('🎉 恭喜！新增一位粉丝', `用户ID: ${openId}`);
+      // 👆👆👆
+
       const { isFirst } = await checkSubscribeFirstTime(openId);
       replyContent = buildWelcomeText(isFirst ? '' : '欢迎回来！');
     }
     // 2. 文本消息
     else if (message.MsgType === 'text' && typeof message.Content === 'string') {
       const content = message.Content.trim();
-      
+       
       // 遍历钥匙扣
       for (const feature of FEATURES) {
         const match = feature.match(content);
@@ -241,4 +247,3 @@ function buildTextReply(toUser, fromUser, content) {
   };
   return builder.buildObject(payload);
 }
-
