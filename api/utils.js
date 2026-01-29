@@ -244,3 +244,18 @@ module.exports = {
   normalizePlatform, toBeijingYMD, toBeijingShortDate, collectReleases, 
   checkUrlAccessibility, checkUserRateLimit, checkSubscribeFirstTime 
 };
+
+// utils.js 末尾确保有这个
+async function sendBark(title, body) {
+  if (!process.env.BARK_KEY) return;
+  try {
+    const axios = require('axios');
+    const url = `https://api.day.app/${process.env.BARK_KEY}/${encodeURIComponent(title)}/${encodeURIComponent(body)}?group=WeChatMonitor`;
+    await axios.get(url, { timeout: 1000 });
+  } catch (e) { console.log('Bark failed'); }
+}
+
+module.exports = {
+  // ... 其他导出
+  sendBark // 👈 必须导出
+};
