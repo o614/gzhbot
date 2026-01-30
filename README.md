@@ -1,4 +1,9 @@
-<p align="center">
-  <img src="https://github-readme-stats.vercel.app/api?username=o614&show_icons=true&theme=radical" width="48%" />
-  <img src="https://github-readme-stats.vercel.app/api/top-langs/?username=o614&layout=compact&theme=radical" width="48%" />
-</p>
+<div align="center">
+  <br>
+  <img src="https://raw.githubusercontent.com/n3r4zzurr0/svg-spinners/main/svg-css/90-ring-with-bg.svg" width="32" height="32" alt="Loading">
+  <br>
+  <br>
+  <sub>Loading...</sub>
+  <br>
+  <br>
+</div>
