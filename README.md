@@ -1,9 +1,8 @@
 <div align="center">
   <br>
-  <img src="https://raw.githubusercontent.com/n3r4zzurr0/svg-spinners/main/svg-css/90-ring-with-bg.svg" width="32" height="32" alt="Loading">
+  <img src="https://raw.githubusercontent.com/n3r4zzurr0/svg-spinners/main/svg-css/90-ring-with-bg.svg" width="50" height="50" alt="Loading">
   <br>
-  <br>
-  <sub>Loading...</sub>
+  <p>Loading...</p>
   <br>
   <br>
 </div>
