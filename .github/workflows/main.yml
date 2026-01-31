@@ -15,83 +15,119 @@ jobs:
       - name: Install Dependencies
         run: npm install axios xml2js
 
-      - name: Run Diagnosis
-        id: diagnosis
-        env:
-          # ⚠️ 确保这是你的 Vercel 项目真实地址 (带 /api/wechat)
-          API_URL: 'https://apple.290935.xyz/api/wechat'
+      # 🛠️ 第一步：生成体检脚本
+      - name: Create Diagnosis Script
         run: |
-          node -e '
-            const axios = require("axios");
-            const xml2js = require("xml2js");
+          cat << 'EOF' > doctor.js
+          const axios = require("axios");
+          const xml2js = require("xml2js");
+          const fs = require("fs"); // 引入文件模块，用于传参给 Bark
 
-            const API_URL = process.env.API_URL;
-            const TIMEOUT = 20000; // 20秒超时
+          const API_URL = process.env.API_URL;
+          const TIMEOUT = 30000; 
 
-            // 🛠️ 辅助函数
-            async function testFeature(featureName, command, expectedKeywords) {
-              console.log(`\n----------------------------------------`);
-              console.log(`🩺 [检测项目]: ${featureName}`);
+          // 辅助函数：测试单个功能
+          async function testFeature(featureName, command, expectedKeywords) {
+            console.log(`\n----------------------------------------`);
+            console.log(`🩺 [检测]: ${featureName}`);
+            
+            const payload = `
+              <xml>
+                <ToUserName><![CDATA[gh_monitor]]></ToUserName>
+                <FromUserName><![CDATA[doctor_bot]]></FromUserName>
+                <CreateTime>${Math.floor(Date.now() / 1000)}</CreateTime>
+                <MsgType><![CDATA[text]]></MsgType>
+                <Content><![CDATA[${command}]]></Content>
+              </xml>
+            `;
+
+            try {
+              const res = await axios.post(API_URL, payload, {
+                headers: { "Content-Type": "text/xml" },
+                timeout: TIMEOUT
+              });
+
+              if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
+
+              const parser = new xml2js.Parser({ explicitArray: false });
+              const result = await parser.parseStringPromise(res.data);
+              const reply = (result && result.xml && result.xml.Content) ? result.xml.Content : "";
+
+              // 验证关键词
+              const passed = expectedKeywords.some(k => reply.includes(k));
               
-              const payload = `
-                <xml>
-                  <ToUserName><![CDATA[gh_monitor]]></ToUserName>
-                  <FromUserName><![CDATA[doctor_bot]]></FromUserName>
-                  <CreateTime>${Math.floor(Date.now() / 1000)}</CreateTime>
-                  <MsgType><![CDATA[text]]></MsgType>
-                  <Content><![CDATA[${command}]]></Content>
-                </xml>
-              `;
-
-              try {
-                const res = await axios.post(API_URL, payload, {
-                  headers: { "Content-Type": "text/xml" },
-                  timeout: TIMEOUT
-                });
-
-                if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
-
-                const parser = new xml2js.Parser({ explicitArray: false });
-                const result = await parser.parseStringPromise(res.data);
-                const reply = (result && result.xml && result.xml.Content) ? result.xml.Content : "";
-
-                // 验证关键词
-                const passed = expectedKeywords.some(k => reply.includes(k));
-                
-                if (passed) {
-                  console.log(`✅ [通过] ${featureName} 正常`);
-                  return true;
-                } else {
-                  console.error(`❌ [失败] ${featureName} 回复异常`);
-                  console.error(`完整回复:\n${reply}`);
-                  return false;
-                }
-              } catch (err) {
-                console.error(`🚑 [致命错误] 请求失败: ${err.message}`);
+              if (passed) {
+                console.log(`✅ [通过]`);
+                return true;
+              } else {
+                console.error(`❌ [失败] 回复不匹配`);
+                // 打印前100个字符用于调试
+                console.log("回复摘要:", reply.replace(/\n/g, " ").substring(0, 100));
                 return false;
               }
+            } catch (err) {
+              console.error(`🚑 [错误] ${err.message}`);
+              return false;
+            }
+          }
+
+          // --- 主流程 ---
+          (async () => {
+            console.log("🏥 体检开始...");
+            if (!API_URL) {
+              console.error("❌ 未配置 API_URL");
+              process.exit(1);
             }
 
-            // 🚀 主执行流程
-            (async () => {
-              console.log("🏥 静默体检开始...");
+            const failedItems = []; // 📝 记录失败的项目
 
-              // 1. 测试查价
-              if (!await testFeature("价格查询", "价格 微信", ["价格", "免费", "内购"])) process.exit(1);
+            // 1. 测查价
+            if (!await testFeature("价格查询", "价格 微信", ["价格", "免费", "内购"])) {
+              failedItems.push("查价服务");
+            }
 
-              // 2. 测试榜单
-              if (!await testFeature("榜单获取", "榜单 美国", ["1、", "1.", "Top 10"])) process.exit(1);
+            // 2. 测榜单
+            if (!await testFeature("榜单获取", "榜单 美国", ["1、", "1.", "Top 10"])) {
+              failedItems.push("榜单服务");
+            }
 
-              // 3. 测试系统更新
-              if (!await testFeature("系统更新", "系统更新", ["iOS", "版本"])) process.exit(1);
+            // 3. 测系统更新
+            if (!await testFeature("系统更新", "系统更新", ["iOS", "版本", "iPadOS"])) {
+              failedItems.push("更新服务");
+            }
 
-              console.log(`\n🎉🎉🎉 所有功能正常 (不发送通知)`);
+            // --- 结论判定 ---
+            if (failedItems.length > 0) {
+              const summary = failedItems.join(" + ") + " 异常";
+              console.error(`\n❌ 体检不通过: ${summary}`);
+              
+              // 关键操作：把错误信息写入 GitHub 的环境变量，传给下一步
+              try {
+                fs.appendFileSync(process.env.GITHUB_OUTPUT, `fail_summary=${summary}\n`);
+              } catch (e) { console.error("写入 Output 失败", e); }
+              
+              process.exit(1); // 标记失败，触发 Bark 通知
+            } else {
+              console.log(`\n🎉 所有功能正常`);
               process.exit(0);
-            })();
-          '
+            }
+          })();
+          EOF
 
-      # ❌ 只有失败时才报警 (Success 的步骤已被删除)
+      # 🚀 第二步：执行体检
+      - name: Run Diagnosis
+        id: diagnosis  # ⚠️ 必须有这个 ID，下一步才能引用它的输出
+        env:
+          API_URL: 'https://apple.290935.xyz/api/wechat'
+        run: node doctor.js
+
+      # ❌ 失败报警 (动态内容)
       - name: Bark Notification (Failure)
         if: failure()
         run: |
-          curl "https://api.day.app/${{ secrets.BARK_KEY }}/❌体检挂了/Bot功能异常，请立即检查!&level=critical?group=BotDoctor&icon=https://github.githubassets.com/favicons/favicon-failure.svg"
+          # 获取上一步传过来的错误摘要，如果没有则显示“未知错误”
+          ERROR_MSG="${{ steps.diagnosis.outputs.fail_summary }}"
+          if [ -z "$ERROR_MSG" ]; then ERROR_MSG="脚本崩溃或未知错误"; fi
+          
+          # 发送通知 (URL 需要编码，简单起见我们直接拼装，Bark 会处理部分字符)
+          curl "https://api.day.app/${{ secrets.BARK_KEY }}/❌体检挂了/${ERROR_MSG}?group=BotDoctor&icon=https://github.githubassets.com/favicons/favicon-failure.svg&level=critical"
