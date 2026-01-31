@@ -21,12 +21,15 @@ jobs:
           cat << 'EOF' > doctor.js
           const axios = require("axios");
           const xml2js = require("xml2js");
-          const fs = require("fs"); // 引入文件模块，用于传参给 Bark
+          const fs = require("fs");
 
           const API_URL = process.env.API_URL;
           const TIMEOUT = 30000; 
 
-          // 辅助函数：测试单个功能
+          // 🔑【修复点1】使用你的管理员ID，避开每日30次限流
+          // 这个ID是从你上传的 consts.js 里提取的
+          const ADMIN_ID = "o4UNGw6r9OL9q_4jRAfed_jnvXh8";
+
           async function testFeature(featureName, command, expectedKeywords) {
             console.log(`\n----------------------------------------`);
             console.log(`🩺 [检测]: ${featureName}`);
@@ -34,7 +37,7 @@ jobs:
             const payload = `
               <xml>
                 <ToUserName><![CDATA[gh_monitor]]></ToUserName>
-                <FromUserName><![CDATA[doctor_bot]]></FromUserName>
+                <FromUserName><![CDATA[${ADMIN_ID}]]></FromUserName> 
                 <CreateTime>${Math.floor(Date.now() / 1000)}</CreateTime>
                 <MsgType><![CDATA[text]]></MsgType>
                 <Content><![CDATA[${command}]]></Content>
@@ -61,7 +64,7 @@ jobs:
                 return true;
               } else {
                 console.error(`❌ [失败] 回复不匹配`);
-                // 打印前100个字符用于调试
+                // 打印关键信息用于调试
                 console.log("回复摘要:", reply.replace(/\n/g, " ").substring(0, 100));
                 return false;
               }
@@ -71,7 +74,6 @@ jobs:
             }
           }
 
-          // --- 主流程 ---
           (async () => {
             console.log("🏥 体检开始...");
             if (!API_URL) {
@@ -79,7 +81,7 @@ jobs:
               process.exit(1);
             }
 
-            const failedItems = []; // 📝 记录失败的项目
+            const failedItems = [];
 
             // 1. 测查价
             if (!await testFeature("价格查询", "价格 微信", ["价格", "免费", "内购"])) {
@@ -96,17 +98,19 @@ jobs:
               failedItems.push("更新服务");
             }
 
-            // --- 结论判定 ---
             if (failedItems.length > 0) {
               const summary = failedItems.join(" + ") + " 异常";
               console.error(`\n❌ 体检不通过: ${summary}`);
               
-              // 关键操作：把错误信息写入 GitHub 的环境变量，传给下一步
+              // 🔑【修复点2】对错误信息进行 URL 编码，防止 curl 报错
+              // 例如 "查价 异常" 会变成 "%E6%9F%A5%E4%BB%B7%20%E5%BC%82%E5%B8%B8"
+              const encodedError = encodeURIComponent(summary);
+              
               try {
-                fs.appendFileSync(process.env.GITHUB_OUTPUT, `fail_summary=${summary}\n`);
+                fs.appendFileSync(process.env.GITHUB_OUTPUT, `fail_summary=${encodedError}\n`);
               } catch (e) { console.error("写入 Output 失败", e); }
               
-              process.exit(1); // 标记失败，触发 Bark 通知
+              process.exit(1);
             } else {
               console.log(`\n🎉 所有功能正常`);
               process.exit(0);
@@ -116,18 +120,17 @@ jobs:
 
       # 🚀 第二步：执行体检
       - name: Run Diagnosis
-        id: diagnosis  # ⚠️ 必须有这个 ID，下一步才能引用它的输出
+        id: diagnosis
         env:
           API_URL: 'https://apple.290935.xyz/api/wechat'
         run: node doctor.js
 
-      # ❌ 失败报警 (动态内容)
+      # ❌ 失败报警
       - name: Bark Notification (Failure)
         if: failure()
         run: |
-          # 获取上一步传过来的错误摘要，如果没有则显示“未知错误”
           ERROR_MSG="${{ steps.diagnosis.outputs.fail_summary }}"
-          if [ -z "$ERROR_MSG" ]; then ERROR_MSG="脚本崩溃或未知错误"; fi
+          if [ -z "$ERROR_MSG" ]; then ERROR_MSG="未知错误"; fi
           
-          # 发送通知 (URL 需要编码，简单起见我们直接拼装，Bark 会处理部分字符)
+          # 直接发送，因为 ERROR_MSG 已经在上一步编码过了，curl 不会再报错
           curl "https://api.day.app/${{ secrets.BARK_KEY }}/❌体检挂了/${ERROR_MSG}?group=BotDoctor&icon=https://github.githubassets.com/favicons/favicon-failure.svg&level=critical"
