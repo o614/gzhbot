@@ -17,7 +17,7 @@ function buildWelcomeText(prefixLine = '') {
     `› <a href="weixin://bizmsgmenu?msgmenucontent=应用查询&msgmenuid=1">应用查询</a>\n热门应用详情查询\n\n` +
     `› <a href="weixin://bizmsgmenu?msgmenucontent=榜单查询&msgmenuid=3">榜单查询</a>\n全球免费付费榜单\n\n` +
     `› <a href="weixin://bizmsgmenu?msgmenucontent=价格查询&msgmenuid=2">价格查询</a>\n应用价格优惠查询\n\n` +
-    `› <a href="weixin://bizmsgmenu?msgmenucontent=切换美国&msgmenuid=4">切换美国</a>\n应用商店随意切换\n\n` +
+    `› <a href="weixin://bizmsgmenu?msgmenucontent=切换地区&msgmenuid=4">切换地区</a>\n应用商店随意切换\n\n` +
     `› <a href="weixin://bizmsgmenu?msgmenucontent=图标查询&msgmenuid=5">图标查询</a>\n获取官方高清图标\n\n更多服务请戳底部菜单栏了解`;
   return prefixLine ? `${prefixLine}\n\n${base}` : base;
 }
@@ -247,3 +247,4 @@ function buildTextReply(toUser, fromUser, content) {
   };
   return builder.buildObject(payload);
 }
+
