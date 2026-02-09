@@ -17,7 +17,7 @@ try { ({ kv } = require('@vercel/kv')); } catch (e) { kv = null; }
 const CACHE_TTL_SHORT = 600; 
 const CACHE_TTL_LONG = 1800; 
 
-// 1. 榜单查询 (【最终完美版】忽略SSL错误直连AX接口 + 备用源兜底 + 统一精美格式)
+// 1. 榜单查询 (【修正版】已移除坏掉的 AX 接口，改用新版官方接口)
 async function handleChartQuery(regionInput, chartType) {
   const regionCode = getCountryCode(regionInput);
   if (!regionCode) return '不支持的地区或格式错误。';
@@ -25,82 +25,69 @@ async function handleChartQuery(regionInput, chartType) {
   const displayName = getCountryName(regionCode);
   const interactiveName = displayName || regionInput;
 
-  // 【修改】缓存前缀 v12
-  const cacheKey = `v12:chart:${regionCode}:${chartType === '免费榜' ? 'free' : 'paid'}`;
+  // 【修改】缓存前缀升级为 v13，强制刷新一下之前的错误缓存
+  const cacheKey = `v13:chart:${regionCode}:${chartType === '免费榜' ? 'free' : 'paid'}`;
 
   return await withCache(cacheKey, CACHE_TTL_SHORT, async () => {
     let apps = []; 
-    let sourceLabel = ''; 
-
+    
     // ------------------------------------------------
-    // 步骤 1: 尝试 AX 动态接口 (忽略证书错误)
+    // 🏆 方案 A (主力): Apple Marketing Tools (最新官方接口)
+    // 对应你截图里的第一条链接：rss.applemarketingtools.com
     // ------------------------------------------------
     try {
-      const typeOld = chartType === '免费榜' ? 'topfreeapplications' : 'toppaidapplications';
-      const urlOld = `https://ax.itunes.apple.com/WebObjects/MZStoreServices.woa/ws/RSS/${typeOld}/limit=10/json?cc=${regionCode}`;
+      // 这里的 typeNew 根据新版 API 规范调整
+      const typeNew = chartType === '免费榜' ? 'top-free' : 'top-paid';
+      const urlNew = `https://rss.applemarketingtools.com/api/v2/${regionCode}/apps/${typeNew}/10/apps.json`;
       
-      // 【核心修改】创建一个忽略证书错误的 Agent
-      const insecureAgent = new https.Agent({  
-        rejectUnauthorized: false 
-      });
-
-      // 将 agent 传给 axios
-      const data = await getJSON(urlOld, { 
-        timeout: 4000, 
-        httpsAgent: insecureAgent 
-      }); 
-
-      const entries = (data && data.feed && data.feed.entry) || [];
+      // 这个接口通常很快，设置 5秒 超时足够了
+      const dataNew = await getJSON(urlNew, { timeout: 5000 });
+      const results = (dataNew && dataNew.feed && dataNew.feed.results) || [];
       
-      if (entries.length) {
-        apps = entries.map(e => {
-          let u = '';
-          if (e.link) {
-             if (Array.isArray(e.link)) u = (e.link[0] && e.link[0].attributes) ? e.link[0].attributes.href : '';
-             else if (e.link.attributes) u = e.link.attributes.href;
-          }
-          return {
-             id: e.id && e.id.attributes ? e.id.attributes['im:id'] : '',
-             name: e['im:name'] ? e['im:name'].label : '未知应用',
-             url: u
-          };
-        });
+      if (results.length) {
+        apps = results.map(r => ({
+           id: r.id,
+           name: r.name,
+           url: r.url 
+        }));
       }
     } catch (e) {
-      console.error(`AX Interface failed for ${regionCode}:`, e.message);
-      // 失败后不返回，继续尝试备用源
+      console.warn(`Plan A (New RSS) failed for ${regionCode}:`, e.message);
     }
 
     // ------------------------------------------------
-    // 步骤 2: MarketingTools (备用)
+    // 🛡️ 方案 B (备用): 旧版 iTunes RSS (稳定老接口)
+    // 对应你截图里的第三条链接：itunes.apple.com/cn/rss/...
     // ------------------------------------------------
     if (apps.length === 0) {
       try {
-        console.log(`Fallback to MarketingTools for ${regionCode}...`);
-        const typeNew = chartType === '免费榜' ? 'top-free' : 'top-paid';
-        const urlNew = `https://rss.marketingtools.apple.com/api/v2/${regionCode}/apps/${typeNew}/10/apps.json`;
+        console.log(`Fallback to Plan B (Old iTunes) for ${regionCode}...`);
+        const typeC = chartType === '免费榜' ? 'topfreeapplications' : 'toppaidapplications';
+        const urlC = `https://itunes.apple.com/${regionCode}/rss/${typeC}/limit=10/json`;
         
-        const dataNew = await getJSON(urlNew, { timeout: 3000 });
-        const results = (dataNew && dataNew.feed && dataNew.feed.results) || [];
+        const dataC = await getJSON(urlC, { timeout: 5000 });
+        const entriesC = (dataC && dataC.feed && dataC.feed.entry) || [];
         
-        if (results.length) {
-          apps = results.map(r => ({
-             id: r.id,
-             name: r.name,
-             url: r.url 
+        if (entriesC.length) {
+          apps = entriesC.map(e => ({
+             id: e.id && e.id.attributes ? e.id.attributes['im:id'] : '',
+             name: e['im:name'] ? e['im:name'].label : '未知应用',
+             url: (e.link && Array.isArray(e.link) && e.link[0].attributes) ? e.link[0].attributes.href : ''
           }));
         }
-      } catch (e2) {
-        console.error('Fallback API also failed:', e2.message);
+      } catch (e3) {
+        console.error('Plan B failed:', e3.message);
       }
     }
 
     // ------------------------------------------------
-    // 步骤 3: 统一渲染
+    // 结果处理
     // ------------------------------------------------
-    if (!apps.length) return '获取榜单失败，Apple 所有接口均无法连接。';
+    if (!apps.length) {
+      return '获取榜单失败，Apple 接口暂不可用，请稍后再试。';
+    }
 
-    let resultText = `${interactiveName}${chartType}${sourceLabel}\n${getFormattedTime()}\n\n`;
+    let resultText = `${interactiveName}${chartType}\n${getFormattedTime()}\n\n`;
 
     resultText += apps.map((app, idx) => {
       const appId = String(app.id || '');
@@ -111,7 +98,6 @@ async function handleChartQuery(regionInput, chartType) {
     }).join('\n');
 
     const toggleCmd = chartType === '免费榜' ? `${interactiveName}付费榜` : `${interactiveName}免费榜`;
-    
     resultText += `\n› <a href="weixin://bizmsgmenu?msgmenucontent=${encodeURIComponent(toggleCmd)}&msgmenuid=chart_toggle">查看${chartType === '免费榜' ? '付费' : '免费'}榜单</a>`;
     resultText += `\n\n${SOURCE_NOTE}`;
     return resultText;
