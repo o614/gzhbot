@@ -65,7 +65,7 @@ const FEATURES = [
     name: 'PriceQueryMenu',
     match: (c) => c === '价格查询',
     needAuth: false,
-    handler: async () => '请回复“价格+应用名称”，例如：\n\n价格微信\n价格知乎\n价格小红书'
+    handler: async () => '请回复“价格+应用名称”，例如：\n\n<a href="weixin://bizmsgmenu?msgmenucontent=价格微信&msgmenuid=价格微信">价格微信</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=价格知乎&msgmenuid=价格知乎">价格知乎</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=价格我的世界&msgmenuid=价格我的世界">价格我的世界</a>'
   },
   {
     name: 'PriceAdvanced',
@@ -114,7 +114,7 @@ const FEATURES = [
     name: 'AppQueryMenu',
     match: (c) => c === '应用查询',
     needAuth: false,
-    handler: async () => '请回复“查询+应用名称”，例如：\n\n查询微信\n查询知乎\n查询小红书'
+    handler: async () => '请回复“查询+应用名称”，例如：\n\n<a href="weixin://bizmsgmenu?msgmenucontent=查询微信&msgmenuid=查询微信">查询微信</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=查询知乎&msgmenuid=查询知乎">查询知乎</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=查询我的世界&msgmenuid=查询我的世界">查询我的世界</a>'
   },
   {
     name: 'SystemUpdateAll',
@@ -133,7 +133,7 @@ const FEATURES = [
     name: 'IconQueryMenu',
     match: (c) => c === '图标查询',
     needAuth: false,
-    handler: async () => '请回复“图标+应用名称”，例如：\n\n图标微信\n图标知乎\n图标小红书'
+    handler: async () => '请回复“图标+应用名称”，例如：\n\n<a href="weixin://bizmsgmenu?msgmenucontent=图标微信&msgmenuid=图标微信">图标微信</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=图标知乎&msgmenuid=图标知乎">图标知乎</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=图标我的世界&msgmenuid=图标我的世界">图标我的世界</a>'
   },
   {
     name: 'AppIcon',
@@ -247,6 +247,7 @@ function buildTextReply(toUser, fromUser, content) {
   };
   return builder.buildObject(payload);
 }
+
 
 
 
