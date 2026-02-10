@@ -104,12 +104,12 @@ function handleRegionSwitch(regionName) {
   const cnRawUrl = `itms-apps://itunes.apple.com/WebObjects/MZStore.woa/wa/resetAndRedirect?dsf=${cnDsf}&cc=${cnCode}`;
 
   // 文案说明：移除点击跳转，只保留长按复制
-  return `由于微信限制，请**长按下方链接 -> 复制**，并在 **Safari 浏览器**地址栏粘贴打开即可自动切换：\n\n` +
+  return `由于微信限制，请长按复制下方链接去 Safari 浏览器地址栏粘贴打开。：\n\n` +
          `【切换至 ${regionName}】链接：\n` +
          `<a href="weixin://">${rawUrl}</a>\n\n` +
          `【切换回 中国】链接：\n` +
          `<a href="weixin://">${cnRawUrl}</a>\n\n` +
-         `弹窗提示“在 App Store 中打开此页？”，请点击【打开】。`;
+         `点击弹窗右侧选项自动跳转切换`;
 }
 
 // 4. 应用详情 (保持不变)
