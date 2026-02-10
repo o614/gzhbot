@@ -102,14 +102,16 @@ function handleRegionSwitch(regionName) {
   const cnCode = 'cn';
   const cnDsf = DSF_MAP[cnCode];
   const cnRawUrl = `itms-apps://itunes.apple.com/WebObjects/MZStore.woa/wa/resetAndRedirect?dsf=${cnDsf}&cc=${cnCode}`;
+  const guideUrl = 'https://mmbiz.qpic.cn/sz_mmbiz_png/pn1epRicvicqib1whqnPvegt2GYq2Eoj811fyKPa0b93xib98o6lGUeIJbicc4hlseKQnPUucoZmrjaicD5OVEfOZLpSmkibdwFq4eiazzrsZXBwsDU/640?wx_fmt=png&from=appmsg';
 
   // 文案说明：移除点击跳转，只保留长按复制
-  return `由于微信限制，请长按复制下方链接去 Safari 浏览器地址栏粘贴打开。：\n\n` +
+  return `由于微信限制，请长按复制下方链接去 Safari 浏览器地址栏粘贴打开。\n\n` +
          `【切换至 ${regionName}】链接：\n` +
          `<a href="weixin://">${rawUrl}</a>\n\n` +
          `【切换回 中国】链接：\n` +
          `<a href="weixin://">${cnRawUrl}</a>\n\n` +
-         `点击弹窗右侧选项自动跳转切换`;
+         `点击弹窗右侧选项自动跳转切换`
+         `› <a href="${guideUrl}">👉 不会操作？点击查看指引</a>`;
 }
 
 // 4. 应用详情 (保持不变)
