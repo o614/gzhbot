@@ -109,7 +109,7 @@ function handleRegionSwitch(regionName) {
          `<a href="weixin://">${rawUrl}</a>\n\n` +
          `【切换回 中国】链接：\n` +
          `<a href="weixin://">${cnRawUrl}</a>\n\n` +
-         `点击弹窗右侧选项自动跳转切换`
+         `<a href="weixin://bizmsgmenu?msgmenucontent=商店切换图示&msgmenuid=商店切换图示">👉 点击查看图示</a>`
 }
 
 // 4. 应用详情 (保持不变)
