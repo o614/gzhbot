@@ -14,10 +14,10 @@ function buildWelcomeText(prefixLine = '') {
   const base =
     `恭喜！你发现了果粉秘密基地\n\n` +
     `› <a href="weixin://bizmsgmenu?msgmenucontent=付款方式&msgmenuid=付款方式">付款方式</a>\n获取注册地址信息\n\n` +
-    `› <a href="weixin://bizmsgmenu?msgmenucontent=应用查询&msgmenuid=1">应用查询</a>\n热门应用详情查询\n\n` +
+    `› <a href="weixin://bizmsgmenu?msgmenucontent=商店切换&msgmenuid=4">商店切换</a>\n修改 App Store 地区\n\n` +
+    `› <a href="weixin://bizmsgmenu?msgmenucontent=应用查询&msgmenuid=1">应用查询</a>\n应用详情查询了解\n\n` +
     `› <a href="weixin://bizmsgmenu?msgmenucontent=榜单查询&msgmenuid=3">榜单查询</a>\n全球免费付费榜单\n\n` +
     `› <a href="weixin://bizmsgmenu?msgmenucontent=价格查询&msgmenuid=2">价格查询</a>\n应用价格优惠查询\n\n` +
-    `› <a href="weixin://bizmsgmenu?msgmenucontent=切换地区&msgmenuid=4">切换地区</a>\n应用商店随意切换\n\n` +
     `› <a href="weixin://bizmsgmenu?msgmenucontent=图标查询&msgmenuid=5">图标查询</a>\n获取官方高清图标\n\n更多服务请戳底部菜单栏了解`;
   return prefixLine ? `${prefixLine}\n\n${base}` : base;
 }
@@ -247,4 +247,5 @@ function buildTextReply(toUser, fromUser, content) {
   };
   return builder.buildObject(payload);
 }
+
 
