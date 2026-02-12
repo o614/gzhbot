@@ -12,7 +12,7 @@ const builder = new Builder({ cdata: true, rootName: 'xml', headless: true });
 function buildWelcomeText(prefixLine = '') {
   const base =
     `恭喜！你发现了果粉秘密基地\n\n` +
-    `› <a href="weixin://bizmsgmenu?msgmenucontent=付款方式">付款方式</a>\n获取注册地址信息\n\n` +
+    `› <a href="weixin://bizmsgmenu?msgmenucontent=付款方式&msgmenuid=1">付款方式</a>\n获取注册地址信息\n\n` +
     `› <a href="weixin://bizmsgmenu?msgmenucontent=切换地区">商店切换</a>\n修改应用商店地区\n\n` +
     `› <a href="weixin://bizmsgmenu?msgmenucontent=应用查询">应用查询</a>\n应用详情查询了解\n\n` +
     `› <a href="weixin://bizmsgmenu?msgmenucontent=榜单查询">榜单查询</a>\n全球免费付费榜单\n\n` +
@@ -252,4 +252,5 @@ function buildTextReply(toUser, fromUser, content) {
   };
   return builder.buildObject(payload);
 }
+
 
