@@ -54,10 +54,9 @@ async function handleChartQuery(regionInput, chartType) {
       if (BLOCKED_APP_IDS.has(appId)) return `${idx + 1}、${appName}`;
       return app.url ? `${idx + 1}、<a href="${app.url}">${appName}</a>` : `${idx + 1}、${appName}`;
     }).join('\n');
-
-    // 【优化】去除 msgmenuid
+    
     const toggleCmd = chartType === '免费榜' ? `${interactiveName}付费榜` : `${interactiveName}免费榜`;
-    resultText += `\n› <a href="weixin://bizmsgmenu?msgmenucontent=${encodeURIComponent(toggleCmd)}">查看${chartType === '免费榜' ? '付费' : '免费'}榜单</a>`;
+    resultText += `\n› <a href="weixin://bizmsgmenu?msgmenucontent=${encodeURIComponent(toggleCmd)}&msgmenuid=chart_toggle">查看${chartType === '免费榜' ? '付费' : '免费'}榜单</a>`;
     resultText += `\n\n${SOURCE_NOTE}`;
     return resultText;
   });
@@ -172,8 +171,8 @@ async function handleSimpleAllOsUpdates() {
       }
       if (!results.length) return '暂未获取到系统版本信息，请稍后再试。';
       let replyText = `最新系统版本：\n\n${results.join('\n')}\n\n查看详情：\n`;
-      replyText += `› <a href="weixin://bizmsgmenu?msgmenucontent=更新iOS">iOS</a>      › <a href="weixin://bizmsgmenu?msgmenucontent=更新iPadOS">iPadOS</a>\n`;
-      replyText += `› <a href="weixin://bizmsgmenu?msgmenucontent=更新macOS">macOS</a>     › <a href="weixin://bizmsgmenu?msgmenucontent=更新watchOS">watchOS</a>\n`;
+      replyText += `› <a href="weixin://bizmsgmenu?msgmenucontent=更新iOS&msgmenuid=iOS">iOS</a>      › <a href="weixin://bizmsgmenu?msgmenucontent=更新iPadOS&msgmenuid=iPadOS">iPadOS</a>\n`;
+      replyText += `› <a href="weixin://bizmsgmenu?msgmenucontent=更新macOS&msgmenuid=macOS">macOS</a>     › <a href="weixin://bizmsgmenu?msgmenucontent=更新watchOS&msgmenuid=watchOS">watchOS</a>\n`;
       replyText += `\n查询时间：${getFormattedTime()}\n\n${SOURCE_NOTE}`;
       return replyText;
     } catch (e) { return '查询系统版本失败，请稍后再试。'; }
