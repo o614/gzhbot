@@ -5,6 +5,11 @@ on:
     - cron: '30 * * * *' # 每小时的第30分钟运行
   workflow_dispatch: # 允许手动点击运行
 
+# 🔑【新增】赋予读取 Action 历史记录的权限，否则查不到上一次的状态
+permissions:
+  actions: read
+  contents: read
+
 jobs:
   full_body_check:
     runs-on: ubuntu-latest
@@ -12,10 +17,39 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 🕵️‍♂️【新增步骤】查询上一次体检结果
+      # 如果上一次是 failure，会输出 was_failure=true
+      - name: Check Last Run Status
+        id: last_run
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              const { owner, repo } = context.repo;
+              // 获取当前 Workflow 的历史运行记录（只取最近的已完成记录）
+              const { data } = await github.rest.actions.listWorkflowRuns({
+                owner,
+                repo,
+                workflow_id: 'bot-doctor.yml', // ⚠️ 注意：文件名最好保持一致，或者依靠 filter
+                status: 'completed',
+                per_page: 1
+              });
+              
+              if (data.workflow_runs.length > 0) {
+                const lastRun = data.workflow_runs[0];
+                console.log(`上一次运行结果: ${lastRun.conclusion}`);
+                if (lastRun.conclusion === 'failure') {
+                  core.setOutput('was_failure', 'true');
+                }
+              }
+            } catch (err) {
+              console.log('查询历史记录失败，跳过恢复检测', err);
+            }
+
       - name: Install Dependencies
         run: npm install axios xml2js
 
-      # 🛠️ 第一步：生成体检脚本
+      # 🛠️ 生成体检脚本 (保持你的原逻辑不变)
       - name: Create Diagnosis Script
         run: |
           cat << 'EOF' > doctor.js
@@ -26,8 +60,7 @@ jobs:
           const API_URL = process.env.API_URL;
           const TIMEOUT = 30000; 
 
-          // 🔑【修复点1】使用你的管理员ID，避开每日30次限流
-          // 这个ID是从你上传的 consts.js 里提取的
+          // 🔑 使用你的管理员ID
           const ADMIN_ID = "o4UNGw6r9OL9q_4jRAfed_jnvXh8";
 
           async function testFeature(featureName, command, expectedKeywords) {
@@ -64,7 +97,6 @@ jobs:
                 return true;
               } else {
                 console.error(`❌ [失败] 回复不匹配`);
-                // 打印关键信息用于调试
                 console.log("回复摘要:", reply.replace(/\n/g, " ").substring(0, 100));
                 return false;
               }
@@ -101,15 +133,10 @@ jobs:
             if (failedItems.length > 0) {
               const summary = failedItems.join(" + ") + " 异常";
               console.error(`\n❌ 体检不通过: ${summary}`);
-              
-              // 🔑【修复点2】对错误信息进行 URL 编码，防止 curl 报错
-              // 例如 "查价 异常" 会变成 "%E6%9F%A5%E4%BB%B7%20%E5%BC%82%E5%B8%B8"
               const encodedError = encodeURIComponent(summary);
-              
               try {
                 fs.appendFileSync(process.env.GITHUB_OUTPUT, `fail_summary=${encodedError}\n`);
-              } catch (e) { console.error("写入 Output 失败", e); }
-              
+              } catch (e) {}
               process.exit(1);
             } else {
               console.log(`\n🎉 所有功能正常`);
@@ -118,19 +145,24 @@ jobs:
           })();
           EOF
 
-      # 🚀 第二步：执行体检
+      # 🚀 执行体检
       - name: Run Diagnosis
         id: diagnosis
         env:
           API_URL: 'https://apple.290935.xyz/api/wechat'
         run: node doctor.js
 
-      # ❌ 失败报警
+      # ❌ 失败报警 (现有逻辑)
       - name: Bark Notification (Failure)
         if: failure()
         run: |
           ERROR_MSG="${{ steps.diagnosis.outputs.fail_summary }}"
           if [ -z "$ERROR_MSG" ]; then ERROR_MSG="未知错误"; fi
-          
-          # 直接发送，因为 ERROR_MSG 已经在上一步编码过了，curl 不会再报错
           curl "https://api.day.app/${{ secrets.BARK_KEY }}/❌体检挂了/${ERROR_MSG}?group=BotDoctor&icon=https://github.githubassets.com/favicons/favicon-failure.svg&level=critical"
+
+      # ✅【新增步骤】恢复通知
+      # 触发条件：本次运行成功 (success) 且 上次运行是失败 (was_failure == true)
+      - name: Bark Notification (Recovery)
+        if: success() && steps.last_run.outputs.was_failure == 'true'
+        run: |
+          curl "https://api.day.app/${{ secrets.BARK_KEY }}/✅服务已恢复/体检各项指标恢复正常，苹果服务器应该不抽风了。?group=BotDoctor&icon=https://github.githubassets.com/favicons/favicon-success.svg&level=active"
