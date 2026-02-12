@@ -109,9 +109,7 @@ function handleRegionSwitch(regionName) {
          `<a href="weixin://">${rawUrl}</a>\n\n` +
          `【切换回 中国】链接：\n` +
          `<a href="weixin://">${cnRawUrl}</a>\n\n` +
-         `*粘贴后如果 Safari 提示“在 App Store 中打开链接吗？”，请点击【打开】。\n\n` +
-         `------------\n` +
-         `› <a href="weixin://bizmsgmenu?msgmenucontent=商店切换图示">👉 不会操作？查看图示</a>`;
+         `👉 不会操作？<a href="weixin://bizmsgmenu?msgmenucontent=商店切换图示">查看图示</a>`;
 }
 
 // 4. 应用详情
