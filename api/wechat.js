@@ -9,9 +9,6 @@ const WECHAT_TOKEN = process.env.WECHAT_TOKEN;
 const parser = new Parser({ explicitArray: false, trim: true });
 const builder = new Builder({ cdata: true, rootName: 'xml', headless: true });
 
-// 你的操作指引图片链接
-const GUIDE_IMG_URL = 'https://mmbiz.qpic.cn/sz_mmbiz_png/pn1epRicvicqib1whqnPvegt2GYq2Eoj811fyKPa0b93xib98o6lGUeIJbicc4hlseKQnPUucoZmrjaicD5OVEfOZLpSmkibdwFq4eiazzrsZXBwsDU/640?wx_fmt=png&from=appmsg';
-
 function buildWelcomeText(prefixLine = '') {
   const base =
     `恭喜！你发现了果粉秘密基地\n\n` +
@@ -181,7 +178,7 @@ async function handlePostRequest(req, res) {
     // 逻辑：如果开启了维护模式，且发送者不是管理员，直接拦截并回复
     if (MAINTENANCE_MODE === true && openId !== ADMIN_OPENID) {
        // 直接返回维护提示，不执行后续任何逻辑
-       replyContent = '系统维护中...\n\n程序猿正在努力敲代码，请稍后再来访问！';
+       replyContent = '系统维护中...';
        const xml = buildTextReply(message.FromUserName, message.ToUserName, replyContent);
        return res.setHeader('Content-Type', 'application/xml').status(200).send(xml);
     }
@@ -255,3 +252,4 @@ function buildTextReply(toUser, fromUser, content) {
   };
   return builder.buildObject(payload);
 }
+
