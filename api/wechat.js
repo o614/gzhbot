@@ -38,7 +38,7 @@ const FEATURES = [
     name: 'ChartQueryMenu',
     match: (c) => c === '榜单查询',
     needAuth: false,
-    handler: async () => '请回复“榜单+地区”，例如：\n\n<a href="weixin://bizmsgmenu?msgmenucontent=榜单美国">榜单美国</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=榜单日本">榜单日本</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=榜单香港">榜单香港</a>'
+    handler: async () => '请回复“榜单+地区”，例如：\n\n<a href="weixin://bizmsgmenu?msgmenucontent=榜单美国&msgmenuid=1">榜单美国</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=榜单日本&msgmenuid=2">榜单日本</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=&msgmenuid=3">榜单香港</a>'
   },
   {
     name: 'ChartSimple',
@@ -62,7 +62,7 @@ const FEATURES = [
     name: 'PriceQueryMenu',
     match: (c) => c === '价格查询',
     needAuth: false,
-    handler: async () => '请回复“价格+应用名称”，例如：\n\n<a href="weixin://bizmsgmenu?msgmenucontent=价格微信">价格微信</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=价格知乎">价格知乎</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=价格我的世界">价格我的世界</a>'
+    handler: async () => '请回复“价格+应用名称”，例如：\n\n<a href="weixin://bizmsgmenu?msgmenucontent=价格微信&msgmenuid=1">价格微信</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=价格知乎&msgmenuid=2">价格知乎</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=价格我的世界&msgmenuid=3">价格我的世界</a>'
   },
   {
     name: 'PriceAdvanced',
@@ -111,7 +111,7 @@ const FEATURES = [
     name: 'AppQueryMenu',
     match: (c) => c === '应用查询',
     needAuth: false,
-    handler: async () => '请回复“查询+应用名称”，例如：\n\n<a href="weixin://bizmsgmenu?msgmenucontent=查询微信">查询微信</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=查询知乎">查询知乎</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=查询我的世界">查询我的世界</a>'
+    handler: async () => '请回复“查询+应用名称”，例如：\n\n<a href="weixin://bizmsgmenu?msgmenucontent=查询微信&msgmenuid=1">查询微信</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=查询知乎&msgmenuid=2">查询知乎</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=查询我的世界&msgmenuid=3">查询我的世界</a>'
   },
   {
     name: 'SystemUpdateAll',
@@ -129,7 +129,7 @@ const FEATURES = [
     name: 'IconQueryMenu',
     match: (c) => c === '图标查询',
     needAuth: false,
-    handler: async () => '请回复“图标+应用名称”，例如：\n\n<a href="weixin://bizmsgmenu?msgmenucontent=图标微信">图标微信</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=图标知乎">图标知乎</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=图标我的世界">图标我的世界</a>'
+    handler: async () => '请回复“图标+应用名称”，例如：\n\n<a href="weixin://bizmsgmenu?msgmenucontent=图标微信&msgmenuid=1">图标微信</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=图标知乎&msgmenuid=2">图标知乎</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=图标我的世界&msgmenuid=3">图标我的世界</a>'
   },
   {
     name: 'AppIcon',
@@ -252,6 +252,7 @@ function buildTextReply(toUser, fromUser, content) {
   };
   return builder.buildObject(payload);
 }
+
 
 
 
