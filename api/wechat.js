@@ -1,8 +1,7 @@
-// api/wechat.js
 const crypto = require('crypto');
 const { Parser, Builder } = require('xml2js');
-const { ALL_SUPPORTED_REGIONS } = require('./consts');
-// 【修改】在这里引入了 sendBark
+// 【修改】引入 MAINTENANCE_MODE 和 ADMIN_OPENID
+const { ALL_SUPPORTED_REGIONS, MAINTENANCE_MODE, ADMIN_OPENID } = require('./consts');
 const { isSupportedRegion, checkUserRateLimit, checkSubscribeFirstTime, sendBark } = require('./utils');
 const Handlers = require('./handlers');
 
@@ -10,15 +9,18 @@ const WECHAT_TOKEN = process.env.WECHAT_TOKEN;
 const parser = new Parser({ explicitArray: false, trim: true });
 const builder = new Builder({ cdata: true, rootName: 'xml', headless: true });
 
+// 你的操作指引图片链接
+const GUIDE_IMG_URL = 'https://mmbiz.qpic.cn/sz_mmbiz_png/pn1epRicvicqib1whqnPvegt2GYq2Eoj811fyKPa0b93xib98o6lGUeIJbicc4hlseKQnPUucoZmrjaicD5OVEfOZLpSmkibdwFq4eiazzrsZXBwsDU/640?wx_fmt=png&from=appmsg';
+
 function buildWelcomeText(prefixLine = '') {
   const base =
     `恭喜！你发现了果粉秘密基地\n\n` +
-    `› <a href="weixin://bizmsgmenu?msgmenucontent=付款方式&msgmenuid=1">付款方式</a>\n获取注册地址信息\n\n` +
-    `› <a href="weixin://bizmsgmenu?msgmenucontent=切换地区&msgmenuid=2">商店切换</a>\n修改应用商店地区\n\n` +
-    `› <a href="weixin://bizmsgmenu?msgmenucontent=应用查询&msgmenuid=3">应用查询</a>\n应用详情查询了解\n\n` +
-    `› <a href="weixin://bizmsgmenu?msgmenucontent=榜单查询&msgmenuid=4">榜单查询</a>\n全球免费付费榜单\n\n` +
-    `› <a href="weixin://bizmsgmenu?msgmenucontent=价格查询&msgmenuid=5">价格查询</a>\n应用价格优惠查询\n\n` +
-    `› <a href="weixin://bizmsgmenu?msgmenucontent=图标查询&msgmenuid=6">图标查询</a>\n获取官方高清图标\n\n更多服务请戳底部菜单栏了解`;
+    `› <a href="weixin://bizmsgmenu?msgmenucontent=付款方式">付款方式</a>\n获取注册地址信息\n\n` +
+    `› <a href="weixin://bizmsgmenu?msgmenucontent=切换地区">商店切换</a>\n修改应用商店地区\n\n` +
+    `› <a href="weixin://bizmsgmenu?msgmenucontent=应用查询">应用查询</a>\n应用详情查询了解\n\n` +
+    `› <a href="weixin://bizmsgmenu?msgmenucontent=榜单查询">榜单查询</a>\n全球免费付费榜单\n\n` +
+    `› <a href="weixin://bizmsgmenu?msgmenucontent=价格查询">价格查询</a>\n应用价格优惠查询\n\n` +
+    `› <a href="weixin://bizmsgmenu?msgmenucontent=图标查询">图标查询</a>\n获取官方高清图标\n\n更多服务请戳底部菜单栏了解`;
   return prefixLine ? `${prefixLine}\n\n${base}` : base;
 }
 
@@ -35,12 +37,11 @@ const FEATURES = [
     needAuth: false,
     handler: async (match, openId) => `你的 OpenID：${openId}`
   },
-  // 【新增】榜单查询引导
   {
     name: 'ChartQueryMenu',
     match: (c) => c === '榜单查询',
     needAuth: false,
-    handler: async () => '请回复“榜单+地区”，例如：\n\n<a href="weixin://bizmsgmenu?msgmenucontent=榜单美国&msgmenuid=榜单美国">榜单美国</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=榜单日本&msgmenuid=榜单日本">榜单日本</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=榜单香港&msgmenuid=榜单香港">榜单香港</a>'
+    handler: async () => '请回复“榜单+地区”，例如：\n\n<a href="weixin://bizmsgmenu?msgmenucontent=榜单美国">榜单美国</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=榜单日本">榜单日本</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=榜单香港">榜单香港</a>'
   },
   {
     name: 'ChartSimple',
@@ -60,12 +61,11 @@ const FEATURES = [
       return Handlers.handleChartQuery(match[1].trim(), match[2]);
     }
   },
-  // 【新增】价格查询引导
   {
     name: 'PriceQueryMenu',
     match: (c) => c === '价格查询',
     needAuth: false,
-    handler: async () => '请回复“价格+应用名称”，例如：\n\n<a href="weixin://bizmsgmenu?msgmenucontent=价格微信&msgmenuid=价格微信">价格微信</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=价格知乎&msgmenuid=价格知乎">价格知乎</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=价格我的世界&msgmenuid=价格我的世界">价格我的世界</a>'
+    handler: async () => '请回复“价格+应用名称”，例如：\n\n<a href="weixin://bizmsgmenu?msgmenucontent=价格微信">价格微信</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=价格知乎">价格知乎</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=价格我的世界">价格我的世界</a>'
   },
   {
     name: 'PriceAdvanced',
@@ -114,7 +114,7 @@ const FEATURES = [
     name: 'AppQueryMenu',
     match: (c) => c === '应用查询',
     needAuth: false,
-    handler: async () => '请回复“查询+应用名称”，例如：\n\n<a href="weixin://bizmsgmenu?msgmenucontent=查询微信&msgmenuid=查询微信">查询微信</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=查询知乎&msgmenuid=查询知乎">查询知乎</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=查询我的世界&msgmenuid=查询我的世界">查询我的世界</a>'
+    handler: async () => '请回复“查询+应用名称”，例如：\n\n<a href="weixin://bizmsgmenu?msgmenucontent=查询微信">查询微信</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=查询知乎">查询知乎</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=查询我的世界">查询我的世界</a>'
   },
   {
     name: 'SystemUpdateAll',
@@ -128,12 +128,11 @@ const FEATURES = [
     needAuth: true,
     handler: async (match) => Handlers.handleDetailedOsUpdate((match[1] || 'iOS').trim())
   },
-  // 【新增】图标查询引导
   {
     name: 'IconQueryMenu',
     match: (c) => c === '图标查询',
     needAuth: false,
-    handler: async () => '请回复“图标+应用名称”，例如：\n\n<a href="weixin://bizmsgmenu?msgmenucontent=图标微信&msgmenuid=图标微信">图标微信</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=图标知乎&msgmenuid=图标知乎">图标知乎</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=图标我的世界&msgmenuid=图标我的世界">图标我的世界</a>'
+    handler: async () => '请回复“图标+应用名称”，例如：\n\n<a href="weixin://bizmsgmenu?msgmenucontent=图标微信">图标微信</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=图标知乎">图标知乎</a>\n<a href="weixin://bizmsgmenu?msgmenucontent=图标我的世界">图标我的世界</a>'
   },
   {
     name: 'AppIcon',
@@ -153,10 +152,8 @@ module.exports = async (req, res) => {
   if (req.method === 'GET') return handleVerification(req, res);
    
   if (req.method === 'POST') {
-    // 4.5秒超时熔断
     const task = handlePostRequest(req, res);
     const timeout = new Promise(resolve => setTimeout(() => resolve('TIMEOUT'), 4500));
-
     try {
       const result = await Promise.race([task, timeout]);
       if (result === 'TIMEOUT') return res.status(200).send(''); 
@@ -178,21 +175,30 @@ async function handlePostRequest(req, res) {
     message = parsedXml.xml || {};
     const openId = message.FromUserName;
 
+    // ===============================================
+    // 🚧 维护模式拦截 (Maintenance Mode Interceptor)
+    // ===============================================
+    // 逻辑：如果开启了维护模式，且发送者不是管理员，直接拦截并回复
+    if (MAINTENANCE_MODE === true && openId !== ADMIN_OPENID) {
+       // 直接返回维护提示，不执行后续任何逻辑
+       replyContent = '系统维护中...\n\n程序猿正在努力敲代码，请稍后再来访问！';
+       const xml = buildTextReply(message.FromUserName, message.ToUserName, replyContent);
+       return res.setHeader('Content-Type', 'application/xml').status(200).send(xml);
+    }
+
     // 1. 关注事件
     if (message.MsgType === 'event' && message.Event === 'subscribe') {
-      
-      // 👇👇👇【这里新增了 Bark 通知的代码】👇👇👇
-      await sendBark('🎉 恭喜！新增一位粉丝', `用户ID: ${openId}`);
-      // 👆👆👆
-
       const { isFirst } = await checkSubscribeFirstTime(openId);
+      
+      if (isFirst) {
+        await sendBark('🎉 恭喜！新增一位粉丝', `用户ID: ${openId}`);
+      }
+      
       replyContent = buildWelcomeText(isFirst ? '' : '欢迎回来！');
     }
     // 2. 文本消息
     else if (message.MsgType === 'text' && typeof message.Content === 'string') {
       const content = message.Content.trim();
-       
-      // 遍历钥匙扣
       for (const feature of FEATURES) {
         const match = feature.match(content);
         if (match) {
@@ -209,7 +215,9 @@ async function handlePostRequest(req, res) {
                replyContent = result;
                break; 
             }
-          } catch (e) { console.error(`Error in feature ${feature.name}:`, e); }
+          } catch (e) { 
+            console.error(`Error in feature ${feature.name}:`, e);
+          }
         }
       }
     }
@@ -247,8 +255,3 @@ function buildTextReply(toUser, fromUser, content) {
   };
   return builder.buildObject(payload);
 }
-
-
-
-
-
