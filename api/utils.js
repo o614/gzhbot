@@ -1,9 +1,8 @@
-// api/utils.js
 const axios = require('axios');
 const https = require('https');
 const { ALL_SUPPORTED_REGIONS, ADMIN_OPENID, DAILY_REQUEST_LIMIT } = require('./consts');
 
-// 数据库连接 (Fail-open)
+// KV 连接错误时静默降级，避免崩溃
 let kv = null;
 try { ({ kv } = require('@vercel/kv')); } catch (e) { kv = null; }
 
@@ -21,11 +20,12 @@ const HTTP = axios.create({
 // ----------------------
 
 async function withCache(key, ttl, fetcher) {
+  // 降级：如果 KV 不可用，直接穿透查询，不报错
   if (!process.env.KV_REST_API_TOKEN || !kv) return await fetcher();
   try {
     const cached = await kv.get(key);
     if (cached) return cached;
-  } catch (e) { console.warn('KV Get Error:', e.message); }
+  } catch (e) { console.warn('KV Get Error (Degraded):', e.message); }
 
   const data = await fetcher();
   if (data) {
@@ -42,16 +42,21 @@ async function checkUrlAccessibility(url) {
 }
 
 async function checkUserRateLimit(openid) {
+  // 降级：如果 KV 不可用，默认允许通过（无限流），保证可用性
   if (!process.env.KV_REST_API_TOKEN || !kv || openid === ADMIN_OPENID) return true;
   const key = `limit:req:${openid}`;
   try {
     const currentCount = await kv.incr(key);
     if (currentCount === 1) await kv.expire(key, 86400);
     return currentCount <= DAILY_REQUEST_LIMIT;
-  } catch (e) { return true; }
+  } catch (e) { 
+    console.warn('RateLimit Error (Allowing):', e.message);
+    return true; 
+  }
 }
 
 async function checkSubscribeFirstTime(openId) {
+  // 降级：如果 KV 不可用，默认视为新用户（会有通知），但不阻断流程
   if (!process.env.KV_REST_API_TOKEN || !kv || !openId) return { isFirst: true };
   const key = `sub:seen:${openId}`;
   try {
@@ -68,16 +73,15 @@ async function checkSubscribeFirstTime(openId) {
 // 业务工具
 // ----------------------
 
-// 【新增】Bark 推送工具函数
+// 【优化】Bark 降权：出错不抛出异常，只记录日志
 async function sendBark(title, body) {
-  // 如果没有配置 Key，直接返回，不报错
   if (!process.env.BARK_KEY) return;
   try {
-    // 使用原生 axios 发送，不使用带 User-Agent 的 HTTP 实例，避免干扰
     const url = `https://api.day.app/${process.env.BARK_KEY}/${encodeURIComponent(title)}/${encodeURIComponent(body)}?group=WeChatMonitor`;
     await axios.get(url, { timeout: 2000 });
   } catch (e) {
-    console.warn('Bark push failed:', e.message);
+    // 默默失败，不要吵醒主程序
+    console.warn('Bark push failed (Ignored):', e.message);
   }
 }
 
@@ -89,12 +93,9 @@ function formatBytes(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-// 【获取代码】支持中文或代码输入 (遍历查找)
 function getCountryCode(identifier) {
   const trimmed = String(identifier || '').trim().toLowerCase();
-  // 1. 直接查中文
   if (ALL_SUPPORTED_REGIONS[trimmed]) return ALL_SUPPORTED_REGIONS[trimmed];
-  // 2. 查不到中文，如果是代码，反向遍历确认是否有效
   if (/^[a-z]{2}$/i.test(trimmed)) {
     for (const name in ALL_SUPPORTED_REGIONS) {
       if (ALL_SUPPORTED_REGIONS[name] === trimmed) return trimmed;
@@ -103,12 +104,11 @@ function getCountryCode(identifier) {
   return '';
 }
 
-// 【新增：获取中文名】把 'jp' 翻译回 '日本' 用于显示
 function getCountryName(code) {
   for (const [name, c] of Object.entries(ALL_SUPPORTED_REGIONS)) {
     if (c === code) return name;
   }
-  return code; // 找不到就原样返回
+  return code; 
 }
 
 function isSupportedRegion(identifier) { return !!getCountryCode(identifier); }
@@ -256,5 +256,5 @@ module.exports = {
   getFormattedTime, getJSON, pickBestMatch, formatPrice, fetchExchangeRate, fetchGdmf,
   normalizePlatform, toBeijingYMD, toBeijingShortDate, collectReleases, 
   checkUrlAccessibility, checkUserRateLimit, checkSubscribeFirstTime,
-  sendBark // 👈 已添加导出
+  sendBark
 };
