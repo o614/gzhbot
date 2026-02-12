@@ -13,11 +13,11 @@ function buildWelcomeText(prefixLine = '') {
   const base =
     `恭喜！你发现了果粉秘密基地\n\n` +
     `› <a href="weixin://bizmsgmenu?msgmenucontent=付款方式&msgmenuid=1">付款方式</a>\n获取注册地址信息\n\n` +
-    `› <a href="weixin://bizmsgmenu?msgmenucontent=切换地区">商店切换</a>\n修改应用商店地区\n\n` +
-    `› <a href="weixin://bizmsgmenu?msgmenucontent=应用查询">应用查询</a>\n应用详情查询了解\n\n` +
-    `› <a href="weixin://bizmsgmenu?msgmenucontent=榜单查询">榜单查询</a>\n全球免费付费榜单\n\n` +
-    `› <a href="weixin://bizmsgmenu?msgmenucontent=价格查询">价格查询</a>\n应用价格优惠查询\n\n` +
-    `› <a href="weixin://bizmsgmenu?msgmenucontent=图标查询">图标查询</a>\n获取官方高清图标\n\n更多服务请戳底部菜单栏了解`;
+    `› <a href="weixin://bizmsgmenu?msgmenucontent=切换地区&msgmenuid=2">商店切换</a>\n修改应用商店地区\n\n` +
+    `› <a href="weixin://bizmsgmenu?msgmenucontent=应用查询&msgmenuid=3">应用查询</a>\n应用详情查询了解\n\n` +
+    `› <a href="weixin://bizmsgmenu?msgmenucontent=榜单查询&msgmenuid=4">榜单查询</a>\n全球免费付费榜单\n\n` +
+    `› <a href="weixin://bizmsgmenu?msgmenucontent=价格查询&msgmenuid=5">价格查询</a>\n应用价格优惠查询\n\n` +
+    `› <a href="weixin://bizmsgmenu?msgmenucontent=图标查询&msgmenuid=6">图标查询</a>\n获取官方高清图标\n\n更多服务请戳底部菜单栏了解`;
   return prefixLine ? `${prefixLine}\n\n${base}` : base;
 }
 
@@ -252,5 +252,6 @@ function buildTextReply(toUser, fromUser, content) {
   };
   return builder.buildObject(payload);
 }
+
 
 
