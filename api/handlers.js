@@ -1,24 +1,20 @@
-// api/handlers.js
-// 【新增】引入 https 模块
 const https = require('https'); 
-
 const { 
   getCountryCode, getCountryName, getJSON, getFormattedTime, SOURCE_NOTE, 
   pickBestMatch, formatPrice, fetchExchangeRate, 
   fetchGdmf, collectReleases, normalizePlatform, toBeijingYMD,
-  checkUrlAccessibility, toBeijingShortDate, formatBytes, withCache,
-  sendBark 
+  checkUrlAccessibility, toBeijingShortDate, formatBytes, withCache
 } = require('./utils');
-
 const { DSF_MAP, BLOCKED_APP_IDS, ADMIN_OPENID, DAILY_REQUEST_LIMIT } = require('./consts');
 
+// KV 连接错误时静默降级，不影响主流程
 let kv = null;
 try { ({ kv } = require('@vercel/kv')); } catch (e) { kv = null; }
 
 const CACHE_TTL_SHORT = 600; 
 const CACHE_TTL_LONG = 1800; 
 
-// 1. 榜单查询 (保持不变)
+// 1. 榜单查询
 async function handleChartQuery(regionInput, chartType) {
   const regionCode = getCountryCode(regionInput);
   if (!regionCode) return '不支持的地区或格式错误。';
@@ -29,6 +25,7 @@ async function handleChartQuery(regionInput, chartType) {
 
   return await withCache(cacheKey, CACHE_TTL_SHORT, async () => {
     let apps = []; 
+    // Plan A: 新接口
     try {
       const typeNew = chartType === '免费榜' ? 'top-free' : 'top-paid';
       const urlNew = `https://rss.applemarketingtools.com/api/v2/${regionCode}/apps/${typeNew}/10/apps.json`;
@@ -37,6 +34,7 @@ async function handleChartQuery(regionInput, chartType) {
       if (results.length) apps = results.map(r => ({ id: r.id, name: r.name, url: r.url }));
     } catch (e) { console.warn(`Plan A failed:`, e.message); }
 
+    // Plan B: 旧接口兜底
     if (apps.length === 0) {
       try {
         const typeC = chartType === '免费榜' ? 'topfreeapplications' : 'toppaidapplications';
@@ -57,14 +55,15 @@ async function handleChartQuery(regionInput, chartType) {
       return app.url ? `${idx + 1}、<a href="${app.url}">${appName}</a>` : `${idx + 1}、${appName}`;
     }).join('\n');
 
+    // 【优化】去除 msgmenuid
     const toggleCmd = chartType === '免费榜' ? `${interactiveName}付费榜` : `${interactiveName}免费榜`;
-    resultText += `\n› <a href="weixin://bizmsgmenu?msgmenucontent=${encodeURIComponent(toggleCmd)}&msgmenuid=chart_toggle">查看${chartType === '免费榜' ? '付费' : '免费'}榜单</a>`;
+    resultText += `\n› <a href="weixin://bizmsgmenu?msgmenucontent=${encodeURIComponent(toggleCmd)}">查看${chartType === '免费榜' ? '付费' : '免费'}榜单</a>`;
     resultText += `\n\n${SOURCE_NOTE}`;
     return resultText;
   });
 }
 
-// 2. 价格查询 (保持不变)
+// 2. 价格查询
 async function handlePriceQuery(appName, regionName, isDefaultSearch) {
   const code = getCountryCode(regionName);
   if (!code) return `不支持的地区或格式错误：${regionName}`;
@@ -79,9 +78,12 @@ async function handlePriceQuery(appName, regionName, isDefaultSearch) {
       const link = `<a href="${best.trackViewUrl}">${best.trackName}</a>`;
       const priceText = formatPrice(best);
       let replyText = `您查询的“${appName}”最匹配的结果是：\n\n${link}\n\n地区：${regionName}\n价格：${priceText}`;
+      // 汇率查询如果失败，catch 住不影响主功能
       if (typeof best.price === 'number' && best.price > 0 && best.currency) {
-        const rate = await fetchExchangeRate(best.currency);
-        if (rate) { const cnyPrice = (best.price * rate).toFixed(2); replyText += ` (≈ ¥${cnyPrice})`; }
+        try {
+          const rate = await fetchExchangeRate(best.currency);
+          if (rate) { const cnyPrice = (best.price * rate).toFixed(2); replyText += ` (≈ ¥${cnyPrice})`; }
+        } catch (ignore) {}
       }
       replyText += `\n时间：${getFormattedTime()}`;
       if (isDefaultSearch) replyText += `\n\n想查其他地区？试试发送：\n价格 ${appName} 日本`;
@@ -90,29 +92,29 @@ async function handlePriceQuery(appName, regionName, isDefaultSearch) {
   });
 }
 
-// 3. 商店切换 (【已修改】统一为复制链接模式)
+// 3. 商店切换
 function handleRegionSwitch(regionName) {
   const regionCode = getCountryCode(regionName);
   const dsf = DSF_MAP[regionCode];
   if (!regionCode || !dsf) return '不支持的地区或格式错误。';
   
-  // 构造 itms-apps 协议链接 (最稳妥的跳转协议)
   const rawUrl = `itms-apps://itunes.apple.com/WebObjects/MZStore.woa/wa/resetAndRedirect?dsf=${dsf}&cc=${regionCode}`;
-
   const cnCode = 'cn';
   const cnDsf = DSF_MAP[cnCode];
   const cnRawUrl = `itms-apps://itunes.apple.com/WebObjects/MZStore.woa/wa/resetAndRedirect?dsf=${cnDsf}&cc=${cnCode}`;
 
-  // 文案说明：移除点击跳转，只保留长按复制
+  // 【优化】去除 msgmenuid
   return `由于微信限制，请长按复制下方链接去 Safari 浏览器地址栏粘贴打开。\n\n` +
          `【切换至 ${regionName}】链接：\n` +
          `<a href="weixin://">${rawUrl}</a>\n\n` +
          `【切换回 中国】链接：\n` +
          `<a href="weixin://">${cnRawUrl}</a>\n\n` +
-         `<a href="weixin://bizmsgmenu?msgmenucontent=商店切换图示&msgmenuid=商店切换图示">👉 点击查看图示</a>`
+         `*粘贴后如果 Safari 提示“在 App Store 中打开链接吗？”，请点击【打开】。\n\n` +
+         `------------\n` +
+         `› <a href="weixin://bizmsgmenu?msgmenucontent=商店切换图示">👉 不会操作？查看图示</a>`;
 }
 
-// 4. 应用详情 (保持不变)
+// 4. 应用详情
 async function handleAppDetails(appName) {
   const code = 'us';
   const cacheKey = `v11:detail:us:${appName.toLowerCase().replace(/\s/g, '')}`;
@@ -134,7 +136,7 @@ async function handleAppDetails(appName) {
   });
 }
 
-// 5. 图标查询 (保持不变)
+// 5. 图标查询
 async function lookupAppIcon(appName) {
   const cacheKey = `v11:icon:us:${appName.toLowerCase().replace(/\s/g, '')}`;
   return await withCache(cacheKey, CACHE_TTL_SHORT, async () => {
@@ -155,7 +157,7 @@ async function lookupAppIcon(appName) {
   });
 }
 
-// 6. 系统更新 (保持不变)
+// 6. 系统更新
 async function handleSimpleAllOsUpdates() {
   const cacheKey = `v11:os:simple_all`;
   return await withCache(cacheKey, CACHE_TTL_LONG, async () => {
@@ -172,15 +174,15 @@ async function handleSimpleAllOsUpdates() {
       }
       if (!results.length) return '暂未获取到系统版本信息，请稍后再试。';
       let replyText = `最新系统版本：\n\n${results.join('\n')}\n\n查看详情：\n`;
-      replyText += `› <a href="weixin://bizmsgmenu?msgmenucontent=更新iOS&msgmenuid=iOS">iOS</a>      › <a href="weixin://bizmsgmenu?msgmenucontent=更新iPadOS&msgmenuid=iPadOS">iPadOS</a>\n`;
-      replyText += `› <a href="weixin://bizmsgmenu?msgmenucontent=更新macOS&msgmenuid=macOS">macOS</a>     › <a href="weixin://bizmsgmenu?msgmenucontent=更新watchOS&msgmenuid=watchOS">watchOS</a>\n`;
+      replyText += `› <a href="weixin://bizmsgmenu?msgmenucontent=更新iOS">iOS</a>      › <a href="weixin://bizmsgmenu?msgmenucontent=更新iPadOS">iPadOS</a>\n`;
+      replyText += `› <a href="weixin://bizmsgmenu?msgmenucontent=更新macOS">macOS</a>     › <a href="weixin://bizmsgmenu?msgmenucontent=更新watchOS">watchOS</a>\n`;
       replyText += `\n查询时间：${getFormattedTime()}\n\n${SOURCE_NOTE}`;
       return replyText;
     } catch (e) { return '查询系统版本失败，请稍后再试。'; }
   });
 }
 
-// 7. 详细系统更新 (保持不变)
+// 7. 详细系统更新
 async function handleDetailedOsUpdate(inputPlatform = 'iOS') {
   const platform = normalizePlatform(inputPlatform) || 'iOS';
   const cacheKey = `v11:os:detail:${platform}`;
@@ -207,7 +209,7 @@ async function handleDetailedOsUpdate(inputPlatform = 'iOS') {
   });
 }
 
-// 8. 管理后台 (保持不变)
+// 8. 管理后台
 async function handleAdminStatus(fromUser) {
   if (fromUser !== ADMIN_OPENID) return ''; 
   try {
