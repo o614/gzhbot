@@ -9,7 +9,7 @@ const ADMIN_OPENID = 'o4UNGw6r9OL9q_4jRAfed_jnvXh8';
 // true  = 开启维护 (除管理员外，所有人回复“系统维护中”)
 // false = 关闭维护 (正常运行)
 // ==========================================
-const MAINTENANCE_MODE = true; 
+const MAINTENANCE_MODE = false; 
 
 // [配置] 每日请求限额
 const DAILY_REQUEST_LIMIT = 30; 
@@ -30,3 +30,4 @@ module.exports = {
   DAILY_REQUEST_LIMIT,
   MAINTENANCE_MODE // 👈 记得导出这个新变量
 };
+
