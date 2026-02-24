@@ -5,7 +5,7 @@ on:
     - cron: '30 * * * *' # 每小时的第30分钟运行
   workflow_dispatch: # 允许手动点击运行
 
-# 🔑【新增】赋予读取 Action 历史记录的权限，否则查不到上一次的状态
+# 必须的权限，用于读取 Action 历史
 permissions:
   actions: read
   contents: read
@@ -17,8 +17,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 🕵️‍♂️【新增步骤】查询上一次体检结果
-      # 如果上一次是 failure，会输出 was_failure=true
+      # 🕵️‍♂️【升级版】动态查询上一次体检结果，不怕文件名改动
       - name: Check Last Run Status
         id: last_run
         uses: actions/github-script@v7
@@ -26,30 +25,47 @@ jobs:
           script: |
             try {
               const { owner, repo } = context.repo;
-              // 获取当前 Workflow 的历史运行记录（只取最近的已完成记录）
+              
+              // 1. 动态获取当前运行的 Workflow ID (彻底解决文件名不匹配问题)
+              const currentRun = await github.rest.actions.getWorkflowRun({
+                owner,
+                repo,
+                run_id: context.runId
+              });
+              const workflowId = currentRun.data.workflow_id;
+              console.log(`🔍 当前工作流 ID: ${workflowId}`);
+              
+              // 2. 查询该工作流最近一次【已完成】的记录
               const { data } = await github.rest.actions.listWorkflowRuns({
                 owner,
                 repo,
-                workflow_id: 'bot-doctor.yml', // ⚠️ 注意：文件名最好保持一致，或者依靠 filter
+                workflow_id: workflowId,
                 status: 'completed',
                 per_page: 1
               });
               
               if (data.workflow_runs.length > 0) {
                 const lastRun = data.workflow_runs[0];
-                console.log(`上一次运行结果: ${lastRun.conclusion}`);
+                console.log(`⏱️ 上次运行结果: ${lastRun.conclusion} (运行编号: ${lastRun.id})`);
                 if (lastRun.conclusion === 'failure') {
                   core.setOutput('was_failure', 'true');
+                  console.log('🚨 标记：上次体检挂了，如果本次成功将触发恢复通知。');
+                } else {
+                  core.setOutput('was_failure', 'false');
                 }
+              } else {
+                console.log('ℹ️ 未找到历史记录。');
+                core.setOutput('was_failure', 'false');
               }
             } catch (err) {
-              console.log('查询历史记录失败，跳过恢复检测', err);
+              console.error('❌ 查询历史记录报错:', err);
+              core.setOutput('was_failure', 'false');
             }
 
       - name: Install Dependencies
         run: npm install axios xml2js
 
-      # 🛠️ 生成体检脚本 (保持你的原逻辑不变)
+      # 🛠️ 生成体检脚本
       - name: Create Diagnosis Script
         run: |
           cat << 'EOF' > doctor.js
@@ -60,7 +76,7 @@ jobs:
           const API_URL = process.env.API_URL;
           const TIMEOUT = 30000; 
 
-          // 🔑 使用你的管理员ID
+          // 🔑 使用你的管理员ID，避开限流
           const ADMIN_ID = "o4UNGw6r9OL9q_4jRAfed_jnvXh8";
 
           async function testFeature(featureName, command, expectedKeywords) {
@@ -89,7 +105,6 @@ jobs:
               const result = await parser.parseStringPromise(res.data);
               const reply = (result && result.xml && result.xml.Content) ? result.xml.Content : "";
 
-              // 验证关键词
               const passed = expectedKeywords.some(k => reply.includes(k));
               
               if (passed) {
@@ -121,7 +136,7 @@ jobs:
             }
 
             // 2. 测榜单
-            if (!await testFeature("榜单获取", "榜单 美国", ["1、", "1.", "Top 10"])) {
+            if (!await testFeature("榜单获取", "榜单 美国", ["1、", "1.", "Top 10", "1，"])) {
               failedItems.push("榜单服务");
             }
 
@@ -152,7 +167,7 @@ jobs:
           API_URL: 'https://apple.290935.xyz/api/wechat'
         run: node doctor.js
 
-      # ❌ 失败报警 (现有逻辑)
+      # ❌ 失败报警
       - name: Bark Notification (Failure)
         if: failure()
         run: |
@@ -160,9 +175,8 @@ jobs:
           if [ -z "$ERROR_MSG" ]; then ERROR_MSG="未知错误"; fi
           curl "https://api.day.app/${{ secrets.BARK_KEY }}/❌体检挂了/${ERROR_MSG}?group=BotDoctor&icon=https://github.githubassets.com/favicons/favicon-failure.svg&level=critical"
 
-      # ✅【新增步骤】恢复通知
-      # 触发条件：本次运行成功 (success) 且 上次运行是失败 (was_failure == true)
+      # ✅ 恢复通知
       - name: Bark Notification (Recovery)
         if: success() && steps.last_run.outputs.was_failure == 'true'
         run: |
-          curl "https://api.day.app/${{ secrets.BARK_KEY }}/✅服务已恢复/体检各项指标恢复正常，苹果服务器应该不抽风了。?group=BotDoctor&icon=https://github.githubassets.com/favicons/favicon-success.svg&level=active"
+          curl "https://api.day.app/${{ secrets.BARK_KEY }}/✅服务已恢复/体检各项指标恢复正常，系统健康状态良好。?group=BotDoctor&icon=https://github.githubassets.com/favicons/favicon-success.svg&level=active"
